@@ -1,0 +1,10 @@
+{
+  "name": "Health SOS - Pregnancy Care",
+  "short_name": "Health SOS",
+  "description": "Emergency health assistance for pregnant women",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ff6b9d",
+  "orientation": "portrait"
+}

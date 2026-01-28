@@ -1,0 +1,104 @@
+# ============================================
+# Dependencies - DO NOT UPLOAD
+# ============================================
+node_modules/
+.pnp
+.pnp.js
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# ============================================
+# Build outputs - DO NOT UPLOAD
+# ============================================
+.next/
+out/
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+
+# ============================================
+# Environment files - IMPORTANT: DO NOT UPLOAD
+# ============================================
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.*.local
+
+# Keep example env files (safe to upload)
+!.env.example
+
+# ============================================
+# Testing & Coverage
+# ============================================
+coverage/
+.nyc_output/
+*.lcov
+
+# ============================================
+# Logs - DO NOT UPLOAD
+# ============================================
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# ============================================
+# Docker volumes - DO NOT UPLOAD
+# ============================================
+postgres_data/
+redis_data/
+uploads/
+.docker/
+
+# ============================================
+# Database
+# ============================================
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Keep Prisma migrations (safe to upload)
+!prisma/migrations/
+
+# ============================================
+# OS Files - DO NOT UPLOAD
+# ============================================
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.AppleDouble
+.LSOverride
+
+# ============================================
+# IDE & Editor - DO NOT UPLOAD
+# ============================================
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.vs/
+*.code-workspace
+
+# ============================================
+# Temporary files
+# ============================================
+tmp/
+temp/
+*.tmp
+.cache/
+.temp/
+
+# ============================================
+# Testing
+# ============================================
+.eslintcache

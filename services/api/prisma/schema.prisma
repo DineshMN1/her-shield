@@ -1,0 +1,262 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  PATIENT
+  DOCTOR
+  ADMIN
+  FAMILY
+}
+
+enum SOSStatus {
+  PENDING
+  ACKNOWLEDGED
+  IN_PROGRESS
+  RESOLVED
+  CANCELLED
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum AppointmentType {
+  VIDEO
+  CLINIC
+}
+
+model User {
+  id                  String   @id @default(cuid())
+  email               String   @unique
+  phone               String   @unique
+  password            String
+  role                UserRole @default(PATIENT)
+  firstName           String
+  lastName            String
+  avatar              String?
+  isVerified          Boolean  @default(false)
+  isActive            Boolean  @default(true)
+  oneSignalPlayerId   String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  patientProfile      PatientProfile?
+  doctorProfile       DoctorProfile?
+  sosAlerts           SOSAlert[]           @relation("PatientSOS")
+  emergencyContacts   EmergencyContact[]   @relation("PatientEmergencyContact")
+  appointments        Appointment[]        @relation("PatientAppointments")
+  doctorAppointments  Appointment[]        @relation("DoctorAppointments")
+  messages            Message[]
+  aiChats             AIChat[]
+  notifications       Notification[]
+
+  @@index([email])
+  @@index([phone])
+}
+
+model PatientProfile {
+  id                 String    @id @default(cuid())
+  userId             String    @unique
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  dateOfBirth        DateTime
+  bloodGroup         String?
+  dueDate            DateTime?
+  pregnancyWeek      Int?
+  medicalHistory     Json?
+  allergies          String[]
+  currentMedications String[]
+  
+  address            String?
+  city               String?
+  state              String?
+  zipCode            String?
+  latitude           Float?
+  longitude          Float?
+  
+  primaryDoctorId    String?
+  primaryDoctor      DoctorProfile? @relation("PrimaryDoctor", fields: [primaryDoctorId], references: [id])
+  
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  
+  healthMetrics      HealthMetric[]
+  
+  @@index([userId])
+}
+
+model DoctorProfile {
+  id                  String    @id @default(cuid())
+  userId              String    @unique
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  specialization      String
+  licenseNumber       String    @unique
+  yearsOfExperience   Int
+  rating              Float     @default(0)
+  totalReviews        Int       @default(0)
+  
+  bio                 String?
+  hospitalAffiliation String?
+  consultationFee     Float?
+  
+  isAvailable         Boolean   @default(true)
+  availableHours      Json?
+  
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  
+  primaryPatients     PatientProfile[] @relation("PrimaryDoctor")
+  sosResponses        SOSAlert[]
+  
+  @@index([userId])
+}
+
+model EmergencyContact {
+  id           String   @id @default(cuid())
+  patientId    String
+  patient      User     @relation("PatientEmergencyContact", fields: [patientId], references: [id], onDelete: Cascade)
+  
+  name         String
+  phone        String
+  relationship String
+  email        String?
+  priority     Int      @default(1)
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  @@index([patientId])
+}
+
+model SOSAlert {
+  id                 String        @id @default(cuid())
+  patientId          String
+  patient            User          @relation("PatientSOS", fields: [patientId], references: [id], onDelete: Cascade)
+  
+  status             SOSStatus     @default(PENDING)
+  urgencyLevel       Int           @default(5)
+  
+  latitude           Float
+  longitude          Float
+  address            String?
+  
+  symptoms           String[]
+  description        String?
+  aiAnalysis         Json?
+  
+  respondingDoctorId String?
+  respondingDoctor   DoctorProfile? @relation(fields: [respondingDoctorId], references: [id])
+  
+  acknowledgedAt     DateTime?
+  resolvedAt         DateTime?
+  
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+  
+  @@index([patientId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Appointment {
+  id          String            @id @default(cuid())
+  patientId   String
+  patient     User              @relation("PatientAppointments", fields: [patientId], references: [id], onDelete: Cascade)
+
+  doctorId    String
+  doctor      User              @relation("DoctorAppointments", fields: [doctorId], references: [id], onDelete: Cascade)
+
+  scheduledAt DateTime
+  duration    Int               @default(30)
+  status      AppointmentStatus @default(SCHEDULED)
+  type        AppointmentType   @default(CLINIC)
+  reason      String?
+
+  roomId      String?
+  notes       String?
+  aiSummary   String?
+
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@index([patientId])
+  @@index([doctorId])
+  @@index([scheduledAt])
+  @@index([status])
+}
+
+model HealthMetric {
+  id               String   @id @default(cuid())
+  patientProfileId String
+  patientProfile   PatientProfile @relation(fields: [patientProfileId], references: [id], onDelete: Cascade)
+  
+  type             String
+  value            Float
+  unit             String
+  notes            String?
+  
+  recordedAt       DateTime @default(now())
+  createdAt        DateTime @default(now())
+  
+  @@index([patientProfileId])
+  @@index([type])
+  @@index([recordedAt])
+}
+
+model Message {
+  id         String   @id @default(cuid())
+  senderId   String
+  sender     User     @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  
+  receiverId String
+  content    String
+  isRead     Boolean  @default(false)
+  
+  createdAt  DateTime @default(now())
+  
+  @@index([senderId])
+  @@index([receiverId])
+  @@index([createdAt])
+}
+
+model AIChat {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  messages  Json
+  context   Json?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([userId])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  type      String
+  title     String
+  body      String
+  data      Json?
+  
+  isRead    Boolean  @default(false)
+  sentAt    DateTime @default(now())
+  
+  @@index([userId])
+  @@index([isRead])
+}

@@ -1,0 +1,14 @@
+{
+  "name": "health-sos-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "docker:up": "cd infra && docker-compose up --build -d",
+    "docker:down": "cd infra && docker-compose down",
+    "docker:logs": "cd infra && docker-compose logs -f",
+    "docker:restart": "cd infra && docker-compose restart"
+  },
+  "dependencies": {
+    "infra": "^1.0.3"
+  }
+}
