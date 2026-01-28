@@ -140,6 +140,7 @@ export default function AppointmentsPage() {
                     'bg-yellow-100 text-yellow-700'
                   }`}>
                     {apt.status === 'IN_PROGRESS' ? 'In Progress' : apt.status}
+                  </span>
                 </div>
               </div>
             ))}

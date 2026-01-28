@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Heart, Calendar, Activity, MessageCircle, Video, Settings, LogOut } from 'lucide-react';
+import { Heart, Calendar, Activity, MessageCircle, Video, Settings, LogOut, FileText } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -103,6 +103,15 @@ export default function MotherDashboard() {
                 <Activity className="w-6 h-6 text-green-600" />
               </div>
               <p className="font-medium text-sm">Health Tracking</p>
+            </div>
+          </Link>
+
+          <Link href="/records">
+            <div className="card text-center cursor-pointer hover:shadow-md">
+              <div className="bg-orange-100 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-2">
+                <FileText className="w-6 h-6 text-orange-600" />
+              </div>
+              <p className="font-medium text-sm">Medical Records</p>
             </div>
           </Link>
         </div>

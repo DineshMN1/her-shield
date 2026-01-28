@@ -1,9 +1,0 @@
-{
-  "name": "@health-sos/admin-web",
-  "version": "1.0.0",
-  "private": true,
-  "scripts": {
-    "dev": "echo 'Admin panel - Coming soon'",
-    "build": "echo 'Admin panel - Coming soon'"
-  }
-}

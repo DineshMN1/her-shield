@@ -1,14 +1,11 @@
 {
-  "name": "health-sos-monorepo",
+  "name": "hershiled",
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "docker:up": "cd infra && docker-compose up --build -d",
-    "docker:down": "cd infra && docker-compose down",
-    "docker:logs": "cd infra && docker-compose logs -f",
-    "docker:restart": "cd infra && docker-compose restart"
-  },
-  "dependencies": {
-    "infra": "^1.0.3"
+    "dev:api": "cd services/api && npm run dev",
+    "dev:web": "cd apps/web && npm run dev",
+    "build:api": "cd services/api && npm run build",
+    "build:web": "cd apps/web && npm run build"
   }
 }

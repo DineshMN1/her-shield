@@ -15,6 +15,7 @@ import { AiModule } from './ai/ai.module';
 import { UploadModule } from './upload/upload.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { AppointmentsModule } from './appointments/appointments.module';
+import { MedicalRecordsModule } from './medical-records/medical-records.module';
 
 @Module({
   imports: [
@@ -24,10 +25,12 @@ import { AppointmentsModule } from './appointments/appointments.module';
     }),
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }]),
     BullModule.forRoot({
-      connection: {
-        host: process.env.REDIS_HOST || 'localhost',
-        port: parseInt(process.env.REDIS_PORT) || 6379,
-      },
+      connection: process.env.REDIS_URL
+        ? { url: process.env.REDIS_URL }
+        : {
+            host: process.env.REDIS_HOST || 'localhost',
+            port: parseInt(process.env.REDIS_PORT) || 6379,
+          },
     }),
     PrismaModule,
     AuthModule,
@@ -41,6 +44,7 @@ import { AppointmentsModule } from './appointments/appointments.module';
     UploadModule,
     NotificationsModule,
     AppointmentsModule,
+    MedicalRecordsModule,
   ],
 })
 export class AppModule {}

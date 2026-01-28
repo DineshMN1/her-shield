@@ -1,6 +1,9 @@
 {
   "name": "healthsos-api",
   "version": "1.0.0",
+  "prisma": {
+    "seed": "ts-node prisma/seed.ts"
+  },
   "scripts": {
     "dev": "nest start --watch",
     "start:dev": "nest start --watch",
