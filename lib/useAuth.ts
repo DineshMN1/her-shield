@@ -32,7 +32,9 @@ export function useAuth(requiredRole?: 'PATIENT' | 'DOCTOR' | 'ADMIN') {
       // Check role if required
       if (requiredRole && parsedUser.role !== requiredRole) {
         // Redirect to appropriate dashboard
-        if (parsedUser.role === 'DOCTOR') {
+        if (parsedUser.role === 'ADMIN') {
+          router.push('/dashboard/admin');
+        } else if (parsedUser.role === 'DOCTOR') {
           router.push('/dashboard/doctor');
         } else {
           router.push('/dashboard/mother');
@@ -67,4 +69,8 @@ export function useRequireDoctor() {
 
 export function useRequirePatient() {
   return useAuth('PATIENT');
+}
+
+export function useRequireAdmin() {
+  return useAuth('ADMIN');
 }

@@ -15,6 +15,16 @@ interface EmergencyContact {
   relationship: string;
 }
 
+interface OrgContact {
+  id: string;
+  orgId: string;
+  orgName: string;
+  name: string;
+  phone: string;
+  type: 'ORGANIZATION' | 'DOCTOR';
+  specialization?: string;
+}
+
 export default function SOSPage() {
   const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [address, setAddress] = useState<string>('');
@@ -22,6 +32,10 @@ export default function SOSPage() {
   const [primaryDoctor, setPrimaryDoctor] = useState<{ name: string; phone: string } | null>(null);
   const [showAddContact, setShowAddContact] = useState(false);
   const [newContact, setNewContact] = useState({ name: '', phone: '', relationship: '' });
+
+  // Organization contacts for escalation
+  const [orgContacts, setOrgContacts] = useState<OrgContact[]>([]);
+  const [showEscalation, setShowEscalation] = useState(false);
 
   // Countdown state
   const [countdown, setCountdown] = useState<number | null>(null);
@@ -33,6 +47,7 @@ export default function SOSPage() {
   useEffect(() => {
     fetchEmergencyContacts();
     fetchPrimaryDoctor();
+    fetchOrganizations();
     getLocation();
 
     return () => {
@@ -98,6 +113,16 @@ export default function SOSPage() {
       }
     } catch (error) {
       console.error('Failed to fetch doctor:', error);
+    }
+  };
+
+  const fetchOrganizations = async () => {
+    try {
+      const response = await fetch('/api/organizations/oncall');
+      const data = await response.json();
+      setOrgContacts(data.emergencyContacts || []);
+    } catch (error) {
+      console.error('Failed to fetch organizations:', error);
     }
   };
 
@@ -407,6 +432,63 @@ export default function SOSPage() {
                       <span className="text-sm">VIDEO</span>
                     </button>
                   ))}
+                </div>
+              )}
+
+              {/* Escalation to Organizations */}
+              {orgContacts.length > 0 && (
+                <div className="mt-4 pt-4 border-t border-gray-200">
+                  <button
+                    onClick={() => setShowEscalation(!showEscalation)}
+                    className="w-full py-3 bg-orange-500 text-white rounded-xl font-semibold flex items-center justify-center space-x-2"
+                  >
+                    <AlertCircle className="w-5 h-5" />
+                    <span>Doctor not responding? Escalate to Hospitals</span>
+                  </button>
+
+                  {showEscalation && (
+                    <div className="mt-3 space-y-2">
+                      <p className="text-orange-600 text-sm font-medium">
+                        Send emergency to partner hospitals ({orgContacts.length} contacts)
+                      </p>
+                      {orgContacts.map((contact) => (
+                        <button
+                          key={contact.id}
+                          onClick={() => {
+                            const mapsLink = getGoogleMapsLink();
+                            const message = encodeURIComponent(
+                              `🚨 EMERGENCY SOS - ESCALATION 🚨\n\n` +
+                              `A patient needs immediate help!\n\n` +
+                              `📹 PLEASE CALL/VIDEO CALL IMMEDIATELY!\n\n` +
+                              `📍 Patient Location:\n${address}\n\n` +
+                              `🗺️ Google Maps:\n${mapsLink}\n\n` +
+                              `This is an escalated emergency from Health SOS app.`
+                            );
+                            const phoneWithCountry = formatPhone(contact.phone);
+                            window.location.href = `https://wa.me/${phoneWithCountry}?text=${message}`;
+                          }}
+                          className="w-full flex items-center justify-between p-3 bg-orange-100 text-orange-800 rounded-xl hover:bg-orange-200"
+                        >
+                          <div className="flex items-center space-x-3">
+                            <div className="bg-orange-200 p-2 rounded-full">
+                              {contact.type === 'ORGANIZATION' ? (
+                                <AlertCircle className="w-4 h-4 text-orange-600" />
+                              ) : (
+                                <Users className="w-4 h-4 text-orange-600" />
+                              )}
+                            </div>
+                            <div className="text-left">
+                              <p className="font-semibold">{contact.name}</p>
+                              <p className="text-xs opacity-80">
+                                {contact.orgName} {contact.specialization && `• ${contact.specialization}`}
+                              </p>
+                            </div>
+                          </div>
+                          <span className="text-sm font-medium">SEND</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 

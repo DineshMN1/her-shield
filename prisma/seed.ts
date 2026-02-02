@@ -80,6 +80,24 @@ async function main() {
   });
   console.log('Created mother:', mother.email);
 
+  // Create admin user
+  const adminPassword = await bcrypt.hash('admin123', 10);
+  const admin = await prisma.user.upsert({
+    where: { email: 'admin@healthsos.com' },
+    update: {},
+    create: {
+      email: 'admin@healthsos.com',
+      phone: '9999999999',
+      password: adminPassword,
+      firstName: 'Admin',
+      lastName: 'User',
+      role: UserRole.ADMIN,
+      isVerified: true,
+      isActive: true,
+    },
+  });
+  console.log('Created admin:', admin.email);
+
   // Create a VIDEO appointment for TODAY (doctor dashboard shows this)
   const today = new Date();
   today.setHours(14, 0, 0, 0); // 2:00 PM today
@@ -125,6 +143,10 @@ async function main() {
 
   console.log('\n✅ Seed completed!');
   console.log('\n📋 Test Accounts:');
+  console.log('─────────────────────────────────────');
+  console.log('ADMIN:');
+  console.log('  Email: admin@healthsos.com');
+  console.log('  Password: admin123');
   console.log('─────────────────────────────────────');
   console.log('DOCTOR:');
   console.log('  Email: doctor@test.com');

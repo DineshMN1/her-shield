@@ -19,8 +19,18 @@ export default function DashboardPage() {
       router.push('/login');
       return;
     }
-    setUser(JSON.parse(userData));
-  }, []);
+    const parsedUser = JSON.parse(userData);
+    setUser(parsedUser);
+
+    // Redirect based on role
+    if (parsedUser.role === 'ADMIN') {
+      router.push('/dashboard/admin');
+    } else if (parsedUser.role === 'DOCTOR') {
+      router.push('/dashboard/doctor');
+    } else if (parsedUser.role === 'PATIENT') {
+      router.push('/dashboard/mother');
+    }
+  }, [router]);
 
   const handleLogout = () => {
     localStorage.removeItem('token');
