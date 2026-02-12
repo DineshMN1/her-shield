@@ -62,22 +62,64 @@ export async function POST(request: NextRequest) {
   if (!user) return unauthorizedResponse();
 
   try {
-    const body = await request.json();
-    const { doctorId, date, time, type = 'CLINIC', reason } = body;
 
-    if (!doctorId || !date || !time) {
+    const body = await request.json();
+    const { doctorId, patientId, date, time, type = 'CLINIC', reason } = body;
+
+    if (!date || !time) {
       return Response.json(
-        { message: 'Doctor, date, and time are required' },
+        { message: 'Date and time are required' },
         { status: 400 }
       );
     }
 
-    const scheduledAt = new Date(`${date}T${time}`);
+    // Validate and construct scheduledAt
+    let scheduledAt: Date;
+    try {
+      // Accept only ISO date and time, e.g., 2026-02-12 and 14:00
+      const isoString = `${date}T${time}`;
+      scheduledAt = new Date(isoString);
+      if (isNaN(scheduledAt.getTime())) {
+        return Response.json({ message: 'Invalid date or time format' }, { status: 400 });
+      }
+    } catch (e) {
+      return Response.json({ message: 'Invalid date or time' }, { status: 400 });
+    }
+
+    // Patient/doctor IDOR and existence/role validation
+    let finalDoctorId: string | undefined = undefined;
+    let finalPatientId: string | undefined = undefined;
+
+    if (user.role === 'DOCTOR') {
+      // Doctor can only create for themselves, must provide patientId
+      finalDoctorId = user.id;
+      if (!patientId) {
+        return Response.json({ message: 'Patient ID is required' }, { status: 400 });
+      }
+      // Validate patient exists and is a PATIENT
+      const patient = await prisma.user.findUnique({ where: { id: patientId } });
+      if (!patient || patient.role !== 'PATIENT') {
+        return Response.json({ message: 'Invalid patient ID or user is not a patient' }, { status: 400 });
+      }
+      finalPatientId = patient.id;
+    } else {
+      // Patient can only create for themselves, must provide doctorId
+      finalPatientId = user.id;
+      if (!doctorId) {
+        return Response.json({ message: 'Doctor ID is required' }, { status: 400 });
+      }
+      // Validate doctor exists and is a DOCTOR
+      const doctor = await prisma.user.findUnique({ where: { id: doctorId } });
+      if (!doctor || doctor.role !== 'DOCTOR') {
+        return Response.json({ message: 'Invalid doctor ID or user is not a doctor' }, { status: 400 });
+      }
+      finalDoctorId = doctor.id;
+    }
 
     // Check for conflicts
     const existingAppointment = await prisma.appointment.findFirst({
       where: {
-        doctorId,
+        doctorId: finalDoctorId,
         scheduledAt,
         status: { in: ['SCHEDULED', 'IN_PROGRESS'] },
       },
@@ -92,8 +134,8 @@ export async function POST(request: NextRequest) {
 
     const appointment = await prisma.appointment.create({
       data: {
-        patientId: user.id,
-        doctorId,
+        patientId: finalPatientId,
+        doctorId: finalDoctorId,
         scheduledAt,
         type,
         reason,
