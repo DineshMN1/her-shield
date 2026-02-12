@@ -102,7 +102,7 @@ export async function POST(request: NextRequest) {
         return Response.json({ message: 'Invalid patient ID or user is not a patient' }, { status: 400 });
       }
       finalPatientId = patient.id;
-    } else {
+    } else if (user.role === 'PATIENT') {
       // Patient can only create for themselves, must provide doctorId
       finalPatientId = user.id;
       if (!doctorId) {
@@ -114,6 +114,9 @@ export async function POST(request: NextRequest) {
         return Response.json({ message: 'Invalid doctor ID or user is not a doctor' }, { status: 400 });
       }
       finalDoctorId = doctor.id;
+    } else {
+      // Only DOCTOR and PATIENT can create appointments
+      return Response.json({ message: 'Only patients and doctors can create appointments' }, { status: 403 });
     }
 
     // Check for conflicts

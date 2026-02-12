@@ -53,11 +53,17 @@ export default function AIAssistantPage() {
     setIsLoading(true);
 
     try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        toast.error('Please log in to use the assistant.');
+        setIsLoading(false);
+        return;
+      }
       const response = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('token')}`,
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           message: userMessage,
@@ -65,11 +71,26 @@ export default function AIAssistantPage() {
         }),
       });
 
-      const data = await response.json();
-
+      let data: any = null;
+      let rawText = '';
       if (response.ok) {
+        try {
+          data = await response.json();
+        } catch (e) {
+          data = { message: 'Malformed response from server.' };
+        }
         setMessages((prev) => [...prev, { role: 'assistant', content: data.response }]);
       } else {
+        try {
+          data = await response.json();
+        } catch (e) {
+          try {
+            rawText = await response.text();
+          } catch {
+            rawText = '';
+          }
+          data = { message: `Error ${response.status}: ${rawText || 'Unknown error'}` };
+        }
         toast.error(data.message || 'Failed to get response');
         setMessages((prev) => [
           ...prev,

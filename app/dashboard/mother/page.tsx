@@ -110,51 +110,64 @@ export default function MotherDashboard() {
         setMeetReason('');
 
         if (data.appointmentId) {
-          router.push(`/video/${data.appointmentId}`);
-        } else {
-          // Validate roomLink before opening
-          let safeToOpen = false;
-          if (typeof data.roomLink === 'string') {
+          // Notify doctors before navigation
+          if (data.onCallDoctors?.length > 0 && (data.appointmentId || data.roomLink)) {
             try {
-              const url = new URL(data.roomLink);
-              const allowedDomains = ['yourdomain.com', 'meet.jit.si', 'zoom.us']; // Add allowed domains here
-              if (
-                url.protocol === 'https:' &&
-                allowedDomains.some((d) => url.hostname.endsWith(d))
-              ) {
-                safeToOpen = true;
+              const notifyPayload: any = {
+                doctorIds: data.onCallDoctors.map((doc: { id: string }) => doc.id),
+                reason: meetReason || 'Immediate consultation',
+              };
+              if (data.appointmentId) {
+                notifyPayload.appointmentId = data.appointmentId;
+              } else if (data.roomLink) {
+                notifyPayload.roomLink = data.roomLink;
               }
+              await fetch('/api/notifyDoctors', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify(notifyPayload),
+              });
             } catch (e) {
-              // Invalid URL
+              // Optionally log or toast error
+              console.error('Failed to notify doctors', e);
             }
           }
-          if (safeToOpen) {
-            window.open(data.roomLink, '_blank');
+          if (data.appointmentId) {
+            router.push(`/video/${data.appointmentId}`);
           } else {
-            toast.error('Invalid or unsafe meeting link.');
+            // Validate roomLink before opening
+            let safeToOpen = false;
+            if (typeof data.roomLink === 'string') {
+              try {
+                const url = new URL(data.roomLink);
+                // Replace with your actual production domains
+                const allowedDomains = ['healthsos.com', 'meet.jit.si', 'zoom.us'];
+                const normalizedHost = url.hostname.toLowerCase().replace(/\.$/, '');
+                safeToOpen =
+                  url.protocol === 'https:' &&
+                  allowedDomains.some((domain) => {
+                    const d = domain.toLowerCase().replace(/\.$/, '');
+                    return (
+                      normalizedHost === d ||
+                      normalizedHost.endsWith('.' + d)
+                    );
+                  });
+              } catch (e) {
+                // Invalid URL
+              }
+            }
+            if (safeToOpen) {
+              window.open(data.roomLink, '_blank');
+            } else {
+              toast.error('Invalid or unsafe meeting link.');
+            }
           }
         }
 
-        // Notify doctors via backend API (no direct WhatsApp fanout or phone normalization)
-        if (data.onCallDoctors?.length > 0 && data.roomLink) {
-          try {
-            await fetch('/api/notifyDoctors', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`,
-              },
-              body: JSON.stringify({
-                doctorIds: data.onCallDoctors.map((doc: { id: string }) => doc.id),
-                roomId: data.appointmentId || '',
-                reason: meetReason || 'Immediate consultation',
-              }),
-            });
-          } catch (e) {
-            // Optionally log or toast error
-            console.error('Failed to notify doctors', e);
-          }
-        }
+        // (Notify logic moved above navigation)
       } else {
         toast.error(data.message || 'Failed to create meeting');
       }
