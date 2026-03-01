@@ -144,7 +144,7 @@ export default function MotherDashboard() {
               try {
                 const url = new URL(data.roomLink);
                 // Replace with your actual production domains
-                const allowedDomains = ['healthsos.com', 'meet.jit.si', 'zoom.us'];
+                const allowedDomains = ['healthsos.com', 'meet.ffmuc.net', 'meet.jit.si', 'zoom.us'];
                 const normalizedHost = url.hostname.toLowerCase().replace(/\.$/, '');
                 safeToOpen =
                   url.protocol === 'https:' &&

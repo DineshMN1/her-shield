@@ -74,6 +74,12 @@ interface InstantMeetAlert {
   };
 }
 
+function getInstantMeetJoinUrl(data?: InstantMeetAlert['data']) {
+  if (!data) return undefined;
+  if (data.roomId) return `https://meet.ffmuc.net/${encodeURIComponent(data.roomId)}`;
+  return data.roomLink;
+}
+
 export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
   const [organizations, setOrganizations] = useState<Organization[]>([]);
@@ -337,9 +343,9 @@ export default function AdminDashboard() {
               <X className="w-5 h-5" />
             </button>
           </div>
-          {activeInstantMeetAlert.data?.roomLink && (
+          {getInstantMeetJoinUrl(activeInstantMeetAlert.data) && (
             <a
-              href={activeInstantMeetAlert.data.roomLink}
+              href={getInstantMeetJoinUrl(activeInstantMeetAlert.data)}
               target="_blank"
               rel="noopener noreferrer"
               className="mt-3 inline-flex items-center rounded-lg bg-white text-red-600 px-3 py-1.5 text-sm font-semibold"
