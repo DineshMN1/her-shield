@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Building2, Users, Phone, Plus, Trash2, Settings, LogOut,
   Heart, AlertCircle, CheckCircle, UserPlus, X,
@@ -62,6 +62,18 @@ interface RecentUser {
 
 type TabKey = 'overview' | 'organizations' | 'users' | 'emergency';
 
+interface InstantMeetAlert {
+  id: string;
+  title: string;
+  body: string;
+  sentAt: string;
+  data?: {
+    roomLink?: string;
+    roomId?: string;
+    patientName?: string;
+  };
+}
+
 export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
   const [organizations, setOrganizations] = useState<Organization[]>([]);
@@ -73,6 +85,8 @@ export default function AdminDashboard() {
   const [expandedOrg, setExpandedOrg] = useState<string | null>(null);
   const [searchUsers, setSearchUsers] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
+  const [activeInstantMeetAlert, setActiveInstantMeetAlert] = useState<InstantMeetAlert | null>(null);
+  const seenNotificationIdsRef = useRef<Set<string>>(new Set());
 
   const [newOrg, setNewOrg] = useState({
     name: '', type: 'HOSPITAL', phone: '', email: '', city: '',
@@ -85,6 +99,84 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     fetchAllData();
+  }, []);
+
+  useEffect(() => {
+    const playAlertSound = () => {
+      try {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (!AudioCtx) return;
+        const ctx = new AudioCtx();
+        const o1 = ctx.createOscillator();
+        const o2 = ctx.createOscillator();
+        const g = ctx.createGain();
+        o1.type = 'square';
+        o2.type = 'sine';
+        o1.frequency.value = 740;
+        o2.frequency.value = 880;
+        g.gain.value = 0.0001;
+        o1.connect(g);
+        o2.connect(g);
+        g.connect(ctx.destination);
+        o1.start();
+        o2.start();
+        const now = ctx.currentTime;
+        g.gain.exponentialRampToValueAtTime(0.2, now + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, now + 0.5);
+        o1.stop(now + 0.5);
+        o2.stop(now + 0.5);
+      } catch {
+        // ignore audio errors
+      }
+    };
+
+    const pollInstantMeetNotifications = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        if (!token) return;
+
+        const res = await fetch('/api/notifications?unreadOnly=1&type=INSTANT_MEET&take=10', {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        });
+        if (!res.ok) return;
+
+        const data = await res.json();
+        const notifications = Array.isArray(data.notifications) ? data.notifications : [];
+        if (notifications.length === 0) return;
+
+        const fresh = notifications.find((n: any) => !seenNotificationIdsRef.current.has(n.id));
+        notifications.forEach((n: any) => seenNotificationIdsRef.current.add(n.id));
+
+        await fetch('/api/notifications', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ ids: notifications.map((n: any) => n.id) }),
+        }).catch(() => null);
+
+        if (!fresh) return;
+
+        const alert: InstantMeetAlert = {
+          id: fresh.id,
+          title: fresh.title || 'Instant Meet Triggered',
+          body: fresh.body || 'A patient has triggered instant meet.',
+          sentAt: fresh.sentAt,
+          data: (typeof fresh.data === 'object' && fresh.data) || {},
+        };
+        setActiveInstantMeetAlert(alert);
+        toast.error('New Instant Meet request');
+        playAlertSound();
+      } catch {
+        // ignore polling errors
+      }
+    };
+
+    pollInstantMeetNotifications();
+    const id = setInterval(pollInstantMeetNotifications, 7000);
+    return () => clearInterval(id);
   }, []);
 
   const fetchAllData = async () => {
@@ -226,6 +318,37 @@ export default function AdminDashboard() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {activeInstantMeetAlert && (
+        <div className="fixed top-20 right-4 z-50 w-[380px] max-w-[92vw] bg-red-600 text-white rounded-xl shadow-2xl p-4 border border-red-500">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-wide opacity-90">Instant Meet Alert</p>
+              <h3 className="font-bold">{activeInstantMeetAlert.title}</h3>
+              <p className="text-sm mt-1 text-red-50">{activeInstantMeetAlert.body}</p>
+              {activeInstantMeetAlert.data?.patientName && (
+                <p className="text-xs mt-2 text-red-100">Patient: {activeInstantMeetAlert.data.patientName}</p>
+              )}
+            </div>
+            <button
+              onClick={() => setActiveInstantMeetAlert(null)}
+              className="text-white/90 hover:text-white"
+              aria-label="Dismiss instant meet alert"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          {activeInstantMeetAlert.data?.roomLink && (
+            <a
+              href={activeInstantMeetAlert.data.roomLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 inline-flex items-center rounded-lg bg-white text-red-600 px-3 py-1.5 text-sm font-semibold"
+            >
+              Open Meet
+            </a>
+          )}
+        </div>
+      )}
       {/* Header */}
       <div className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">

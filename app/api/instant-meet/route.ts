@@ -29,21 +29,13 @@ export async function POST(request: NextRequest) {
     });
 
     const notifiedDoctors: string[] = [];
+    const doctorUserIds = new Set<string>();
 
     // Notify primary doctor if exists
     if (patient?.patientProfile?.primaryDoctor) {
       const doc = patient.patientProfile.primaryDoctor.user;
       notifiedDoctors.push(`${doc.firstName} ${doc.lastName}`);
-
-      await prisma.notification.create({
-        data: {
-          userId: doc.id,
-          type: 'INSTANT_MEET',
-          title: 'Instant Meeting Request',
-          body: `${user.firstName} ${user.lastName} is requesting an immediate consultation. Reason: ${reason || 'Not specified'}`,
-          data: { roomLink, roomId, patientId: user.id, patientName: `${user.firstName} ${user.lastName}` },
-        },
-      });
+      doctorUserIds.add(doc.id);
     }
 
     // Get on-call doctors from organizations
@@ -51,6 +43,18 @@ export async function POST(request: NextRequest) {
       where: { isOnCall: true },
       include: { organization: true },
     });
+
+    // Add on-call doctors (mapped by phone to doctor users)
+    const onCallDoctorUsers = await prisma.user.findMany({
+      where: {
+        role: 'DOCTOR',
+        phone: { in: onCallDoctors.map((d) => d.doctorPhone) },
+      },
+      select: { id: true, firstName: true, lastName: true, phone: true },
+    });
+    for (const doc of onCallDoctorUsers) {
+      doctorUserIds.add(doc.id);
+    }
 
     // Create emergency call record
     await prisma.emergencyCall.create({
@@ -95,12 +99,55 @@ export async function POST(request: NextRequest) {
       appointmentId = appointment.id;
     }
 
+    const notificationBody = `${user.firstName} ${user.lastName} is requesting an immediate consultation. Reason: ${reason || 'Not specified'}`;
+
+    // Notify doctors
+    if (doctorUserIds.size > 0) {
+      await prisma.notification.createMany({
+        data: Array.from(doctorUserIds).map((doctorId) => ({
+          userId: doctorId,
+          type: 'INSTANT_MEET',
+          title: 'Instant Meeting Request',
+          body: notificationBody,
+          data: {
+            roomLink,
+            roomId,
+            patientId: user.id,
+            patientName: `${user.firstName} ${user.lastName}`,
+          },
+        })),
+      });
+    }
+
+    // Notify admins
+    const admins = await prisma.user.findMany({
+      where: { role: 'ADMIN', isActive: true },
+      select: { id: true },
+    });
+    if (admins.length > 0) {
+      await prisma.notification.createMany({
+        data: admins.map((admin) => ({
+          userId: admin.id,
+          type: 'INSTANT_MEET',
+          title: 'Instant Meet Triggered',
+          body: `${user.firstName} ${user.lastName} started an instant meet request. Reason: ${reason || 'Not specified'}`,
+          data: {
+            roomLink,
+            roomId,
+            patientId: user.id,
+            patientName: `${user.firstName} ${user.lastName}`,
+          },
+        })),
+      });
+    }
+
     return Response.json({
       roomId,
       roomLink,
       appointmentId,
       notifiedDoctors,
       onCallDoctors: onCallDoctors.map((d) => ({
+        id: onCallDoctorUsers.find((u) => u.phone === d.doctorPhone)?.id || null,
         name: d.doctorName,
         phone: d.doctorPhone,
         org: d.organization.name,

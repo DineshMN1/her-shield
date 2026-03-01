@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Heart, Calendar, Users, Video, Settings, LogOut, Clock, Pill,
   Search, Plus, ChevronRight, Activity, X, Loader, Zap,
@@ -53,6 +53,18 @@ const INSTRUCTION_OPTIONS = ['Before food', 'After food', 'With food', 'Empty st
 
 type TabKey = 'today' | 'patients' | 'appointments';
 
+interface InstantMeetAlert {
+  id: string;
+  title: string;
+  body: string;
+  sentAt: string;
+  data?: {
+    roomLink?: string;
+    roomId?: string;
+    patientName?: string;
+  };
+}
+
 export default function DoctorDashboard() {
   const { user, loading: authLoading, logout } = useRequireDoctor();
   const [activeTab, setActiveTab] = useState<TabKey>('today');
@@ -81,9 +93,90 @@ export default function DoctorDashboard() {
   const [scheduleType, setScheduleType] = useState('VIDEO');
   const [scheduleReason, setScheduleReason] = useState('');
   const [scheduling, setScheduling] = useState(false);
+  const [activeInstantMeetAlert, setActiveInstantMeetAlert] = useState<InstantMeetAlert | null>(null);
+  const seenNotificationIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (user) fetchDashboardData();
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const playAlertSound = () => {
+      try {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (!AudioCtx) return;
+        const ctx = new AudioCtx();
+        const o1 = ctx.createOscillator();
+        const o2 = ctx.createOscillator();
+        const g = ctx.createGain();
+        o1.type = 'sine';
+        o2.type = 'sine';
+        o1.frequency.value = 880;
+        o2.frequency.value = 660;
+        g.gain.value = 0.0001;
+        o1.connect(g);
+        o2.connect(g);
+        g.connect(ctx.destination);
+        o1.start();
+        o2.start();
+        const now = ctx.currentTime;
+        g.gain.exponentialRampToValueAtTime(0.2, now + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, now + 0.45);
+        o1.stop(now + 0.45);
+        o2.stop(now + 0.45);
+      } catch {
+        // ignore audio errors
+      }
+    };
+
+    const pollInstantMeetNotifications = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch('/api/notifications?unreadOnly=1&type=INSTANT_MEET&take=10', {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        });
+        if (!res.ok) return;
+
+        const data = await res.json();
+        const notifications = Array.isArray(data.notifications) ? data.notifications : [];
+        if (notifications.length === 0) return;
+
+        const fresh = notifications.find((n: any) => !seenNotificationIdsRef.current.has(n.id));
+        notifications.forEach((n: any) => seenNotificationIdsRef.current.add(n.id));
+
+        await fetch('/api/notifications', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ ids: notifications.map((n: any) => n.id) }),
+        }).catch(() => null);
+
+        if (!fresh) return;
+
+        const alert: InstantMeetAlert = {
+          id: fresh.id,
+          title: fresh.title || 'Instant Meet Request',
+          body: fresh.body || 'A patient is requesting an immediate consultation.',
+          sentAt: fresh.sentAt,
+          data: (typeof fresh.data === 'object' && fresh.data) || {},
+        };
+
+        setActiveInstantMeetAlert(alert);
+        toast.error('Instant Meet request received');
+        playAlertSound();
+      } catch {
+        // ignore polling errors
+      }
+    };
+
+    pollInstantMeetNotifications();
+    const id = setInterval(pollInstantMeetNotifications, 7000);
+    return () => clearInterval(id);
   }, [user]);
 
   const fetchDashboardData = async () => {
@@ -281,6 +374,37 @@ export default function DoctorDashboard() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {activeInstantMeetAlert && (
+        <div className="fixed top-20 right-4 z-50 w-[360px] max-w-[92vw] bg-red-600 text-white rounded-xl shadow-2xl p-4 border border-red-500">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-wide opacity-90">Emergency</p>
+              <h3 className="font-bold">{activeInstantMeetAlert.title}</h3>
+              <p className="text-sm mt-1 text-red-50">{activeInstantMeetAlert.body}</p>
+              {activeInstantMeetAlert.data?.patientName && (
+                <p className="text-xs mt-2 text-red-100">Patient: {activeInstantMeetAlert.data.patientName}</p>
+              )}
+            </div>
+            <button
+              onClick={() => setActiveInstantMeetAlert(null)}
+              className="text-white/90 hover:text-white"
+              aria-label="Dismiss instant meet alert"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          {activeInstantMeetAlert.data?.roomLink && (
+            <a
+              href={activeInstantMeetAlert.data.roomLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 inline-flex items-center rounded-lg bg-white text-red-600 px-3 py-1.5 text-sm font-semibold"
+            >
+              Join Meet
+            </a>
+          )}
+        </div>
+      )}
       {/* Header */}
       <div className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">

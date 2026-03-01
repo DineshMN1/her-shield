@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import {
-  Heart, Calendar, Activity, MessageCircle, Video, Settings, LogOut,
+  Heart, Calendar, MessageCircle, Video, Settings, LogOut,
   FileText, Apple, Phone, Clock, AlertCircle, Pill, ChevronRight, Zap,
 } from 'lucide-react';
 import Link from 'next/link';
@@ -247,7 +247,7 @@ export default function MotherDashboard() {
         </div>
 
         {/* Quick Actions Grid */}
-        <div className="grid grid-cols-4 gap-3 mb-6">
+        <div className="grid grid-cols-3 gap-3 mb-6">
           <Link href="/appointments/book">
             <div className="bg-white rounded-xl p-3 text-center cursor-pointer hover:shadow-md transition-shadow">
               <div className="bg-pink-100 w-10 h-10 rounded-full flex items-center justify-center mx-auto mb-1.5">
@@ -270,14 +270,6 @@ export default function MotherDashboard() {
                 <FileText className="w-5 h-5 text-orange-600" />
               </div>
               <p className="font-medium text-xs">Records</p>
-            </div>
-          </Link>
-          <Link href="/health">
-            <div className="bg-white rounded-xl p-3 text-center cursor-pointer hover:shadow-md transition-shadow">
-              <div className="bg-purple-100 w-10 h-10 rounded-full flex items-center justify-center mx-auto mb-1.5">
-                <Activity className="w-5 h-5 text-purple-600" />
-              </div>
-              <p className="font-medium text-xs">Health</p>
             </div>
           </Link>
         </div>

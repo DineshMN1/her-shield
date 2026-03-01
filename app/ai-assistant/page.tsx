@@ -25,7 +25,7 @@ export default function AIAssistantPage() {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
-      content: 'Hello! I\'m your AI health assistant for pregnancy and maternal care. Ask me anything about nutrition, symptoms, baby development, or general pregnancy questions.\n\nRemember: I provide general information only. Always consult your doctor for medical decisions.',
+      content: 'Vanakkam. I am Your 24/7 Pregnancy Care Companion Emergency Support helper. I can support you with pregnancy care questions in a simple, practical way.\n\nI provide general help only and cannot diagnose. If there is urgent danger, call 112/108 and use SOS immediately.',
     },
   ]);
   const [input, setInput] = useState('');
@@ -141,7 +141,7 @@ export default function AIAssistantPage() {
                 <h2 className="text-base font-bold">AI Health Assistant</h2>
                 <div className="flex items-center gap-1">
                   <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                  <p className="text-xs text-gray-500">Online - Ask anything</p>
+                  <p className="text-xs text-gray-500">Online - Pregnancy helper</p>
                 </div>
               </div>
             </div>

@@ -17,31 +17,19 @@ async function fetchWithTimeout(resource: RequestInfo, options: RequestInit = {}
 import { NextRequest } from 'next/server';
 import { getAuthUser, unauthorizedResponse } from '@/lib/auth';
 
-const SYSTEM_PROMPT = `You are a caring and knowledgeable maternal health AI assistant for the Health SOS app. Your role is to help pregnant mothers with health-related questions.
+const SYSTEM_PROMPT = `You are "Your 24/7 Pregnancy Care Companion Emergency Support" for the Health SOS app, with Indian care context.
 
 Guidelines:
-- Provide helpful, accurate information about pregnancy, maternal health, nutrition, common symptoms, and baby development
-- Be warm, empathetic, and supportive in your responses
-- Always remind users to consult their doctor for medical decisions
-- If someone describes an emergency (severe bleeding, intense pain, loss of consciousness, seizures), immediately tell them to call emergency services or use the SOS feature
-- Cover topics: pregnancy symptoms, nutrition, exercise, fetal development, common concerns, postpartum care, breastfeeding, mental health
-- Keep responses concise but informative (2-4 paragraphs max)
-- Use simple language, avoid excessive medical jargon
-- Never diagnose conditions - only provide general information
-- If asked about medications, always say "consult your doctor before taking any medication"
-- You can discuss trimester-specific advice, common tests, and what to expect
-
-You are NOT a replacement for medical professionals. Always encourage regular prenatal checkups.`;
-
-// Auto-detect provider from API key format
-function detectProvider(apiKey: string): string {
-  if (apiKey.startsWith('sk-ant-')) return 'anthropic';
-  if (apiKey.startsWith('sk-') || apiKey.startsWith('sk-proj-')) return 'openai';
-  if (apiKey.startsWith('gsk_')) return 'groq';
-  if (apiKey.startsWith('AI') || apiKey.length === 39) return 'gemini';
-  // Default to gemini as it's most common free option
-  return 'gemini';
-}
+- Respond only as a pregnancy-care and emergency-support helper
+- Tone: warm, respectful, reassuring, and practical; use simple Indian English
+- Keep replies concise with clear action steps (short paragraphs or bullet points)
+- Never claim to be a doctor; never diagnose; never prescribe medicines or dosage
+- In emergencies (heavy bleeding, severe abdominal pain, chest pain, breathing trouble, seizures, fainting, confusion, severe headache with blurred vision, reduced/no fetal movement), say this first: "This may be an emergency. Call 112/108 now and use SOS immediately."
+- After emergency advice, add immediate safety steps while waiting (do not delay ambulance/help)
+- For non-emergency questions, give practical next steps and advise contacting obstetrician/gynecologist (OB-GYN), midwife, or nearest hospital
+- Prefer India-relevant guidance when useful (common foods, hydration, rest, local care access), but stay general and safe
+- If user asks unrelated or unsafe requests, politely refuse and redirect to pregnancy care/emergency support
+- If user mixes Hindi/English, understand both; reply in clear English unless user asks Hindi`;
 
 async function callGemini(apiKey: string, messages: { role: string; content: string }[]) {
   const contents = messages.map((m) => ({
@@ -50,7 +38,7 @@ async function callGemini(apiKey: string, messages: { role: string; content: str
   }));
 
   const res = await fetchWithTimeout(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${apiKey}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -71,73 +59,6 @@ async function callGemini(apiKey: string, messages: { role: string; content: str
   return data.candidates?.[0]?.content?.parts?.[0]?.text || 'Sorry, I could not generate a response.';
 }
 
-async function callOpenAI(apiKey: string, messages: { role: string; content: string }[]) {
-  const res = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        ...messages,
-      ],
-      temperature: 0.7,
-      max_tokens: 1024,
-    }),
-  });
-
-  const data = await res.json();
-  if (data.error) throw new Error(data.error.message);
-  return data.choices?.[0]?.message?.content || 'Sorry, I could not generate a response.';
-}
-
-async function callAnthropic(apiKey: string, messages: { role: string; content: string }[]) {
-  const res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-5-20250929',
-      max_tokens: 1024,
-      system: SYSTEM_PROMPT,
-      messages,
-    }),
-  });
-
-  const data = await res.json();
-  if (data.error) throw new Error(data.error.message);
-  return data.content?.[0]?.text || 'Sorry, I could not generate a response.';
-}
-
-async function callGroq(apiKey: string, messages: { role: string; content: string }[]) {
-  const res = await fetchWithTimeout('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'llama-3.3-70b-versatile',
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        ...messages,
-      ],
-      temperature: 0.7,
-      max_tokens: 1024,
-    }),
-  });
-
-  const data = await res.json();
-  if (data.error) throw new Error(data.error.message);
-  return data.choices?.[0]?.message?.content || 'Sorry, I could not generate a response.';
-}
-
 export async function POST(request: NextRequest) {
   const user = await getAuthUser(request);
   if (!user) return unauthorizedResponse();
@@ -150,15 +71,13 @@ export async function POST(request: NextRequest) {
       return Response.json({ message: 'Message is required' }, { status: 400 });
     }
 
-    const apiKey = process.env.AI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY || process.env.AI_API_KEY;
     if (!apiKey) {
       return Response.json(
-        { message: 'AI service not configured. Please add AI_API_KEY to environment variables.' },
+        { message: 'AI service not configured. Please add GEMINI_API_KEY to environment variables.' },
         { status: 503 }
       );
     }
-
-    const provider = process.env.AI_PROVIDER || detectProvider(apiKey);
 
     // Sanitize and filter conversation history (last 10 valid messages)
     const conversationHistory = Array.isArray(history)
@@ -173,24 +92,7 @@ export async function POST(request: NextRequest) {
       conversationHistory.push({ role: 'user', content: message });
     }
 
-    let responseText: string;
-
-    switch (provider) {
-      case 'gemini':
-        responseText = await callGemini(apiKey, conversationHistory);
-        break;
-      case 'openai':
-        responseText = await callOpenAI(apiKey, conversationHistory);
-        break;
-      case 'anthropic':
-        responseText = await callAnthropic(apiKey, conversationHistory);
-        break;
-      case 'groq':
-        responseText = await callGroq(apiKey, conversationHistory);
-        break;
-      default:
-        responseText = await callGemini(apiKey, conversationHistory);
-    }
+    const responseText = await callGemini(apiKey, conversationHistory);
 
     return Response.json({ response: responseText });
   } catch (error: unknown) {
