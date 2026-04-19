@@ -1,12 +1,10 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { Video, ArrowLeft, PhoneOff } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Video, ArrowLeft, PhoneOff, ExternalLink } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import Link from 'next/link';
-
-const JITSI_DOMAIN = 'meet.jit.si';
 
 export default function VideoCallPage() {
   const params = useParams();
@@ -17,17 +15,15 @@ export default function VideoCallPage() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [inCall, setInCall] = useState(false);
-  const jitsiApiRef = useRef<any>(null);
 
   const roomName = `HealthSOS${appointmentId.replace(/-/g, '')}`;
   const isDoctor = currentUser?.role === 'DOCTOR';
 
-  // Don't manually prepend "Dr." — the DB may already store it in the name
+  // Don't prepend "Dr." — DB may already include it in the stored name
   const otherPartyName = isDoctor
     ? appointment?.patientName
     : appointment?.doctorName;
 
-  // Full name used inside the Jitsi room as the participant label
   const displayName = currentUser
     ? (isDoctor
         ? `Dr. ${currentUser.firstName} ${currentUser.lastName}`.trim()
@@ -39,49 +35,6 @@ export default function VideoCallPage() {
     if (userData) setCurrentUser(JSON.parse(userData));
     fetchAppointmentDetails();
   }, []);
-
-  // Use Jitsi External API — avoids X-Frame-Options / "refused to connect" issues
-  useEffect(() => {
-    if (!inCall) return;
-
-    let api: any = null;
-
-    const initJitsi = () => {
-      const container = document.getElementById('jitsi-container');
-      if (!container || !(window as any).JitsiMeetExternalAPI) return;
-
-      api = new (window as any).JitsiMeetExternalAPI(JITSI_DOMAIN, {
-        roomName,
-        parentNode: container,
-        userInfo: { displayName },
-        configOverwrite: {
-          prejoinPageEnabled: false,
-          startWithAudioMuted: false,
-          startWithVideoMuted: false,
-          disableDeepLinking: true,
-        },
-      });
-      jitsiApiRef.current = api;
-    };
-
-    if ((window as any).JitsiMeetExternalAPI) {
-      initJitsi();
-    } else {
-      // Avoid duplicate script injection
-      if (!document.getElementById('jitsi-external-api')) {
-        const script = document.createElement('script');
-        script.id = 'jitsi-external-api';
-        script.src = `https://${JITSI_DOMAIN}/external_api.js`;
-        script.onload = initJitsi;
-        document.head.appendChild(script);
-      }
-    }
-
-    return () => {
-      api?.dispose();
-      jitsiApiRef.current = null;
-    };
-  }, [inCall, roomName, displayName]);
 
   const fetchAppointmentDetails = async () => {
     const token = localStorage.getItem('token');
@@ -117,12 +70,13 @@ export default function VideoCallPage() {
 
   const joinCall = () => {
     updateAppointmentStatus('IN_PROGRESS');
+    // Open Jitsi in a new tab — avoids all iframe/X-Frame-Options restrictions
+    const jitsiUrl = `https://meet.jit.si/${roomName}#userInfo.displayName=${encodeURIComponent(displayName)}&config.prejoinPageEnabled=false&config.startWithAudioMuted=false&config.startWithVideoMuted=false`;
+    window.open(jitsiUrl, '_blank');
     setInCall(true);
   };
 
   const handleEndCall = async () => {
-    jitsiApiRef.current?.dispose();
-    jitsiApiRef.current = null;
     setInCall(false);
     await updateAppointmentStatus('COMPLETED');
     toast.success('Consultation completed');
@@ -170,10 +124,40 @@ export default function VideoCallPage() {
         </div>
       </div>
 
-      {/* Video Area */}
-      <div className="flex-1 bg-black">
+      {/* Main Area */}
+      <div className="flex-1 bg-gray-900">
         {inCall ? (
-          <div id="jitsi-container" style={{ height: 'calc(100vh - 60px)', width: '100%' }} />
+          /* Call in progress — Jitsi is open in a separate tab */
+          <div className="max-w-2xl mx-auto px-4 py-16 text-center">
+            <div className="bg-green-900/30 border border-green-700 rounded-2xl p-10 mb-8">
+              <div className="w-20 h-20 bg-green-600 rounded-full flex items-center justify-center mx-auto mb-6 animate-pulse">
+                <Video className="w-10 h-10 text-white" />
+              </div>
+              <h2 className="text-2xl font-bold text-white mb-2">Call in Progress</h2>
+              <p className="text-green-300 mb-1">
+                Your video call with {otherPartyName} is open in a new tab.
+              </p>
+              <p className="text-gray-400 text-sm">
+                Return here when the consultation is finished and click &quot;End Call&quot;.
+              </p>
+            </div>
+
+            <button
+              onClick={joinCall}
+              className="w-full mb-4 bg-gray-700 hover:bg-gray-600 text-white font-medium py-3 px-6 rounded-xl flex items-center justify-center space-x-2 transition-colors"
+            >
+              <ExternalLink className="w-5 h-5" />
+              <span>Reopen Video Call Tab</span>
+            </button>
+
+            <button
+              onClick={handleEndCall}
+              className="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-4 px-6 rounded-xl flex items-center justify-center space-x-2 transition-colors"
+            >
+              <PhoneOff className="w-5 h-5" />
+              <span>End Consultation</span>
+            </button>
+          </div>
         ) : (
           <div className="max-w-2xl mx-auto px-4 py-12">
             {/* Pre-call Screen */}
@@ -233,12 +217,12 @@ export default function VideoCallPage() {
               onClick={joinCall}
               className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-4 px-6 rounded-xl flex items-center justify-center space-x-3 transition-colors"
             >
-              <Video className="w-6 h-6" />
+              <ExternalLink className="w-6 h-6" />
               <span>Join Video Call</span>
             </button>
 
             <p className="text-center text-gray-500 text-sm mt-4">
-              Both you and {isDoctor ? 'the patient' : 'the doctor'} will join the same room
+              Opens in a new tab — both you and {isDoctor ? 'the patient' : 'the doctor'} join the same room
             </p>
           </div>
         )}
