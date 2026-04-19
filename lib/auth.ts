@@ -3,7 +3,8 @@ import bcrypt from 'bcrypt';
 import { NextRequest } from 'next/server';
 import prisma from './prisma';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'hershield-jwt-secret';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) throw new Error('JWT_SECRET environment variable is not set');
 
 export interface JWTPayload {
   userId: string;
@@ -20,7 +21,7 @@ export async function comparePassword(password: string, hash: string): Promise<b
 }
 
 export function generateToken(payload: JWTPayload): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: '30d' });
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
 }
 
 export function verifyToken(token: string): JWTPayload | null {

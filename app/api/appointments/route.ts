@@ -82,6 +82,9 @@ export async function POST(request: NextRequest) {
       if (isNaN(scheduledAt.getTime())) {
         return Response.json({ message: 'Invalid date or time format' }, { status: 400 });
       }
+      if (scheduledAt < new Date()) {
+        return Response.json({ message: 'Appointment cannot be scheduled in the past' }, { status: 400 });
+      }
     } catch (e) {
       return Response.json({ message: 'Invalid date or time' }, { status: 400 });
     }

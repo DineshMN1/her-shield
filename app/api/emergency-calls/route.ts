@@ -34,6 +34,9 @@ export async function POST(request: NextRequest) {
 
 // PUT /api/emergency-calls - Update emergency call status / escalate
 export async function PUT(request: NextRequest) {
+  const user = await getAuthUser(request);
+  if (!user) return unauthorizedResponse();
+
   try {
     const body = await request.json();
     const { id, action, ...data } = body;

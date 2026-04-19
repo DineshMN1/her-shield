@@ -29,9 +29,10 @@ export default function VideoCallPage() {
     ? (isDoctor ? `Dr. ${currentUser.firstName}` : currentUser.firstName)
     : 'Guest';
 
-  // Build Jitsi iframe URL - using jitsi.ffmuc.net (no moderator requirement)
+  // Build Jitsi iframe URL - using meet.ffmuc.net (no moderator requirement)
+  // Note: interfaceConfig.* params are deprecated in Jitsi 6+ and cause grey screen
   const jitsiDomain = 'meet.ffmuc.net';
-  const jitsiUrl = `https://${jitsiDomain}/${roomName}#userInfo.displayName="${encodeURIComponent(displayName)}"&config.prejoinConfig.enabled=false&config.startWithAudioMuted=false&config.startWithVideoMuted=false&config.disableDeepLinking=true&interfaceConfig.SHOW_JITSI_WATERMARK=false&interfaceConfig.TOOLBAR_BUTTONS=["microphone","camera","closedcaptions","desktop","fullscreen","fodeviceselection","hangup","chat","settings","videoquality","tileview"]`;
+  const jitsiUrl = `https://${jitsiDomain}/${roomName}#userInfo.displayName="${encodeURIComponent(displayName)}"&config.prejoinPageEnabled=false&config.startWithAudioMuted=false&config.startWithVideoMuted=false&config.disableDeepLinking=true`;
 
   useEffect(() => {
     const userData = localStorage.getItem('user');
@@ -136,9 +137,10 @@ export default function VideoCallPage() {
         {inCall ? (
           <iframe
             src={jitsiUrl}
-            allow="camera; microphone; fullscreen; display-capture; autoplay"
-            className="w-full h-full border-0 bg-black"
-            style={{ minHeight: 'calc(100vh - 60px)' }}
+            allow="camera; microphone; fullscreen; display-capture; autoplay; speaker"
+            allowFullScreen
+            className="w-full border-0 block"
+            style={{ height: 'calc(100vh - 60px)' }}
           />
         ) : (
           <div className="max-w-2xl mx-auto px-4 py-12">

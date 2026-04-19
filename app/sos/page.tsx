@@ -28,6 +28,7 @@ interface OrgContact {
 export default function SOSPage() {
   const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [address, setAddress] = useState<string>('');
+  const [locationDenied, setLocationDenied] = useState(false);
   const [contacts, setContacts] = useState<EmergencyContact[]>([]);
   const [primaryDoctor, setPrimaryDoctor] = useState<{ name: string; phone: string } | null>(null);
   const [showAddContact, setShowAddContact] = useState(false);
@@ -75,9 +76,9 @@ export default function SOSPage() {
           }
         },
         () => {
-          // Default to Bangalore if location fails
-          setLocation({ lat: 12.9716, lng: 77.5946 });
-          setAddress('Location unavailable');
+          setLocation(null);
+          setLocationDenied(true);
+          toast.error('Location access denied. Enable location to use SOS.');
         },
         { enableHighAccuracy: true }
       );
@@ -555,7 +556,11 @@ export default function SOSPage() {
                 <AlertCircle className="w-16 h-16 text-white" />
               </button>
               <p className="text-red-600 mt-4 font-bold text-lg">TAP FOR EMERGENCY</p>
-              <p className="text-gray-500 text-sm">10 seconds to cancel if pressed by mistake</p>
+              {!location ? (
+                <p className="text-red-500 text-sm font-medium">Enable location access to use SOS</p>
+              ) : (
+                <p className="text-gray-500 text-sm">10 seconds to cancel if pressed by mistake</p>
+              )}
             </>
           )}
         </div>
@@ -569,7 +574,9 @@ export default function SOSPage() {
                 <MapPin className="w-5 h-5 text-green-600 mt-0.5" />
                 <div className="flex-1">
                   <p className="font-medium text-sm">Your Location</p>
-                  <p className="text-gray-600 text-xs mt-1">{address || 'Getting location...'}</p>
+                  <p className={`text-xs mt-1 ${locationDenied ? 'text-red-500 font-medium' : 'text-gray-600'}`}>
+                    {locationDenied ? 'Location access denied — enable in browser settings' : (address || 'Getting location...')}
+                  </p>
                   {location && (
                     <a
                       href={getGoogleMapsLink()}
