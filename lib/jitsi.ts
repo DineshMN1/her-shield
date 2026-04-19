@@ -7,5 +7,6 @@ export function buildJitsiJoinUrl(roomOrLink: string, displayName: string) {
     ? `${room.origin}${room.pathname}`
     : `https://meet.jit.si/${encodeURIComponent(roomOrLink)}`;
 
-  return `${baseUrl}#userInfo.displayName=${encodeURIComponent(displayName)}&config.prejoinPageEnabled=false&config.startWithAudioMuted=false&config.startWithVideoMuted=false`;
+  // Use the current Jitsi config flag so the pre-join screen does not ask for a name.
+  return `${baseUrl}#userInfo.displayName=${encodeURIComponent(displayName)}&config.prejoinConfig.enabled=false&config.startWithAudioMuted=false&config.startWithVideoMuted=false`;
 }

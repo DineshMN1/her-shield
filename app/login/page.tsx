@@ -29,8 +29,10 @@ export default function LoginPage() {
         localStorage.setItem('token', data.token);
         localStorage.setItem('user', JSON.stringify(data.user));
         toast.success('Welcome back!');
-        
-        if (data.user.role === 'DOCTOR') {
+
+        if (data.user.role === 'ADMIN') {
+          router.push('/dashboard/admin');
+        } else if (data.user.role === 'DOCTOR') {
           router.push('/dashboard/doctor');
         } else {
           router.push('/dashboard/mother');
