@@ -5,6 +5,7 @@ import prisma from './prisma';
 
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) throw new Error('JWT_SECRET environment variable is not set');
+const SECRET: string = JWT_SECRET;
 
 export interface JWTPayload {
   userId: string;
@@ -21,12 +22,12 @@ export async function comparePassword(password: string, hash: string): Promise<b
 }
 
 export function generateToken(payload: JWTPayload): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
+  return jwt.sign(payload, SECRET, { expiresIn: '7d' });
 }
 
 export function verifyToken(token: string): JWTPayload | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as JWTPayload;
+    return jwt.verify(token, SECRET) as JWTPayload;
   } catch {
     return null;
   }
