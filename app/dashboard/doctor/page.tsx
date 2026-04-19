@@ -8,6 +8,7 @@ import {
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { useRequireDoctor } from '@/lib/useAuth';
+import { buildJitsiJoinUrl } from '@/lib/jitsi';
 
 interface Patient {
   id: string;
@@ -62,17 +63,21 @@ interface InstantMeetAlert {
     roomLink?: string;
     roomId?: string;
     patientName?: string;
+    appointmentId?: string;
   };
 }
 
-function getInstantMeetJoinUrl(data?: InstantMeetAlert['data']) {
+function getInstantMeetJoinUrl(data?: InstantMeetAlert['data'], displayName = 'Doctor') {
   if (!data) return undefined;
-  if (data.roomId) return `https://meet.ffmuc.net/${encodeURIComponent(data.roomId)}`;
-  return data.roomLink;
+  if (data.appointmentId) return `/video/${data.appointmentId}`;
+  if (data.roomId) return buildJitsiJoinUrl(data.roomId, displayName);
+  if (data.roomLink) return buildJitsiJoinUrl(data.roomLink, displayName);
+  return undefined;
 }
 
 export default function DoctorDashboard() {
   const { user, loading: authLoading, logout } = useRequireDoctor();
+  const displayName = user ? `Dr. ${user.firstName} ${user.lastName}`.trim() : 'Doctor';
   const [activeTab, setActiveTab] = useState<TabKey>('today');
   const [todayAppointments, setTodayAppointments] = useState<Appointment[]>([]);
   const [allAppointments, setAllAppointments] = useState<Appointment[]>([]);
@@ -385,11 +390,25 @@ export default function DoctorDashboard() {
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-xs uppercase tracking-wide opacity-90">Emergency</p>
-              <h3 className="font-bold">{activeInstantMeetAlert.title}</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold">{activeInstantMeetAlert.title}</h3>
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                  activeInstantMeetAlert.data?.appointmentId
+                    ? 'bg-green-100 text-green-700'
+                    : 'bg-yellow-100 text-yellow-800'
+                }`}>
+                  {activeInstantMeetAlert.data?.appointmentId ? 'Assigned' : 'Waiting'}
+                </span>
+              </div>
               <p className="text-sm mt-1 text-red-50">{activeInstantMeetAlert.body}</p>
               {activeInstantMeetAlert.data?.patientName && (
                 <p className="text-xs mt-2 text-red-100">Patient: {activeInstantMeetAlert.data.patientName}</p>
               )}
+              <p className="text-xs mt-1 text-red-100">
+                {activeInstantMeetAlert.data?.appointmentId
+                  ? 'The shared appointment is ready. Join the video page now.'
+                  : 'The request is waiting for admin assignment. A shared appointment will appear once the doctor is transferred.'}
+              </p>
             </div>
             <button
               onClick={() => setActiveInstantMeetAlert(null)}
@@ -399,9 +418,9 @@ export default function DoctorDashboard() {
               <X className="w-5 h-5" />
             </button>
           </div>
-          {getInstantMeetJoinUrl(activeInstantMeetAlert.data) && (
+          {getInstantMeetJoinUrl(activeInstantMeetAlert.data, displayName) && (
             <a
-              href={getInstantMeetJoinUrl(activeInstantMeetAlert.data)}
+              href={getInstantMeetJoinUrl(activeInstantMeetAlert.data, displayName)}
               target="_blank"
               rel="noopener noreferrer"
               className="mt-3 inline-flex items-center rounded-lg bg-white text-red-600 px-3 py-1.5 text-sm font-semibold"

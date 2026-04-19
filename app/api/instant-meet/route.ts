@@ -114,6 +114,7 @@ export async function POST(request: NextRequest) {
             roomId,
             patientId: user.id,
             patientName: `${user.firstName} ${user.lastName}`,
+            appointmentId,
           },
         })),
       });

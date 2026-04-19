@@ -36,6 +36,7 @@ export default function MotherDashboard() {
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
   const [loadingData, setLoadingData] = useState(true);
   const [instantMeetLoading, setInstantMeetLoading] = useState(false);
+  const [instantMeetWaiting, setInstantMeetWaiting] = useState(false);
   const [meetReason, setMeetReason] = useState('');
   const [showMeetModal, setShowMeetModal] = useState(false);
 
@@ -111,17 +112,13 @@ export default function MotherDashboard() {
 
         if (data.appointmentId) {
           // Appointment created — go to the video page (same room as doctor + admin)
+          setInstantMeetWaiting(false);
           router.push(`/video/${data.appointmentId}`);
         } else {
-          // No doctor available yet — open the room link directly
-          // Admin will assign a doctor shortly; patient waits in the room
-          const roomLink: string = data.roomLink || '';
-          if (roomLink.startsWith('https://meet.jit.si/')) {
-            window.open(roomLink, '_blank');
-            toast.info('Waiting for a doctor — admin has been notified and will assign one shortly.');
-          } else {
-            toast.error('Could not open meeting link.');
-          }
+          // No shared appointment exists yet, so keep the patient in-app.
+          // Admin can assign a doctor and then everyone will join the shared appointment page.
+          setInstantMeetWaiting(true);
+          toast.info('Waiting for a doctor — admin has been notified and will assign one shortly.');
         }
       } else {
         toast.error(data.message || 'Failed to create meeting');
@@ -177,6 +174,22 @@ export default function MotherDashboard() {
           <h1 className="text-xl font-bold">Welcome back, {user?.firstName}!</h1>
           <p className="text-gray-600 text-sm">How are you feeling today?</p>
         </div>
+
+        {instantMeetWaiting && (
+          <div className="mb-6 rounded-2xl border border-blue-200 bg-blue-50 p-4 shadow-sm">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-full bg-blue-600/10">
+                <Clock className="h-5 w-5 text-blue-600" />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-blue-900">Waiting for doctor assignment</p>
+                <p className="mt-1 text-sm text-blue-800">
+                  Your instant consultation request is active. Admin will assign a doctor and then the shared video page will open.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Emergency + Instant Meet Row */}
         <div className="grid grid-cols-2 gap-4 mb-6">
@@ -430,10 +443,17 @@ export default function MotherDashboard() {
                 {instantMeetLoading ? (
                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
                 ) : (
-                  <>
+                  instantMeetWaiting ? (
+                    <>
+                      <Clock className="w-4 h-4" />
+                      Request Sent
+                    </>
+                  ) : (
+                    <>
                     <Video className="w-4 h-4" />
                     Start Meeting
-                  </>
+                    </>
+                  )
                 )}
               </button>
             </div>

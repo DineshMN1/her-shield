@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
+import { buildJitsiJoinUrl } from '@/lib/jitsi';
 
 interface Organization {
   id: string;
@@ -83,12 +84,13 @@ interface RegisteredDoctor {
   specialization: string;
 }
 
-function getInstantMeetJoinUrl(data?: InstantMeetAlert['data']): string | undefined {
+function getInstantMeetJoinUrl(data?: InstantMeetAlert['data'], displayName = 'Admin'): string | undefined {
   if (!data) return undefined;
   // Prefer appointment-based video page so all parties share the same room
   if (data.appointmentId) return `/video/${data.appointmentId}`;
-  if (data.roomId) return `https://meet.jit.si/${data.roomId}`;
-  return data.roomLink;
+  if (data.roomId) return buildJitsiJoinUrl(data.roomId, displayName);
+  if (data.roomLink) return buildJitsiJoinUrl(data.roomLink, displayName);
+  return undefined;
 }
 
 export default function AdminDashboard() {
@@ -106,6 +108,7 @@ export default function AdminDashboard() {
   const [registeredDoctors, setRegisteredDoctors] = useState<RegisteredDoctor[]>([]);
   const [selectedDoctorId, setSelectedDoctorId] = useState('');
   const [transferring, setTransferring] = useState(false);
+  const [displayName, setDisplayName] = useState('Admin');
   const seenNotificationIdsRef = useRef<Set<string>>(new Set());
 
   const [newOrg, setNewOrg] = useState({
@@ -119,6 +122,18 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     fetchAllData();
+  }, []);
+
+  useEffect(() => {
+    try {
+      const userData = localStorage.getItem('user');
+      if (!userData) return;
+      const parsed = JSON.parse(userData) as { firstName?: string; lastName?: string };
+      const name = `Admin ${parsed.firstName || ''} ${parsed.lastName || ''}`.trim();
+      setDisplayName(name || 'Admin');
+    } catch {
+      setDisplayName('Admin');
+    }
   }, []);
 
   useEffect(() => {
@@ -384,11 +399,25 @@ export default function AdminDashboard() {
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1">
               <p className="text-xs uppercase tracking-wide opacity-90">🚨 Instant Meet Alert</p>
-              <h3 className="font-bold">{activeInstantMeetAlert.title}</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold">{activeInstantMeetAlert.title}</h3>
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                  activeInstantMeetAlert.data?.appointmentId
+                    ? 'bg-green-100 text-green-700'
+                    : 'bg-yellow-100 text-yellow-800'
+                }`}>
+                  {activeInstantMeetAlert.data?.appointmentId ? 'Assigned' : 'Waiting'}
+                </span>
+              </div>
               <p className="text-sm mt-1 text-red-50">{activeInstantMeetAlert.body}</p>
               {activeInstantMeetAlert.data?.patientName && (
                 <p className="text-xs mt-1 text-red-100 font-medium">Patient: {activeInstantMeetAlert.data.patientName}</p>
               )}
+              <p className="text-xs mt-1 text-red-100">
+                {activeInstantMeetAlert.data?.appointmentId
+                  ? 'This request already has a shared appointment and can be joined immediately.'
+                  : 'This request is still pending assignment. Use Transfer to Doctor to create the shared appointment.'}
+              </p>
             </div>
             <button onClick={() => { setActiveInstantMeetAlert(null); setSelectedDoctorId(''); }} className="text-white/90 hover:text-white shrink-0">
               <X className="w-5 h-5" />
@@ -396,9 +425,9 @@ export default function AdminDashboard() {
           </div>
 
           {/* Join Meet button */}
-          {getInstantMeetJoinUrl(activeInstantMeetAlert.data) && (
+          {getInstantMeetJoinUrl(activeInstantMeetAlert.data, displayName) && (
             <a
-              href={getInstantMeetJoinUrl(activeInstantMeetAlert.data)!}
+              href={getInstantMeetJoinUrl(activeInstantMeetAlert.data, displayName)!}
               target={activeInstantMeetAlert.data?.appointmentId ? '_self' : '_blank'}
               rel="noopener noreferrer"
               className="mt-3 inline-flex items-center rounded-lg bg-white text-red-600 px-3 py-1.5 text-sm font-semibold"

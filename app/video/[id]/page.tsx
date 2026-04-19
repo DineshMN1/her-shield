@@ -5,6 +5,7 @@ import { Video, ArrowLeft, PhoneOff, ExternalLink } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import Link from 'next/link';
+import { buildJitsiJoinUrl } from '@/lib/jitsi';
 
 export default function VideoCallPage() {
   const params = useParams();
@@ -19,19 +20,24 @@ export default function VideoCallPage() {
   // For instant meets the appointment has a stored roomId — use it so all parties share the same room.
   // For scheduled appointments fall back to the appointment ID.
   const roomName = appointment?.roomId
-    ? appointment.roomId.replace(/-/g, '')
+    ? appointment.roomId
     : `HealthSOS${appointmentId.replace(/-/g, '')}`;
 
   const isDoctor = currentUser?.role === 'DOCTOR';
+  const isAdmin = currentUser?.role === 'ADMIN';
 
   // Don't prepend "Dr." — DB may already include it in the stored name
-  const otherPartyName = isDoctor
-    ? appointment?.patientName
-    : appointment?.doctorName;
+  const otherPartyName = isAdmin
+    ? [appointment?.patientName, appointment?.doctorName].filter(Boolean).join(' · ')
+    : isDoctor
+      ? appointment?.patientName
+      : appointment?.doctorName;
 
   const displayName = currentUser
     ? (isDoctor
         ? `Dr. ${currentUser.firstName} ${currentUser.lastName}`.trim()
+        : isAdmin
+          ? `Admin ${currentUser.firstName} ${currentUser.lastName}`.trim()
         : `${currentUser.firstName} ${currentUser.lastName}`.trim())
     : 'Guest';
 
@@ -76,7 +82,7 @@ export default function VideoCallPage() {
   const joinCall = () => {
     if (!roomName) return; // wait until appointment loaded
     updateAppointmentStatus('IN_PROGRESS');
-    const jitsiUrl = `https://meet.jit.si/${roomName}#userInfo.displayName=${encodeURIComponent(displayName)}&config.prejoinPageEnabled=false&config.startWithAudioMuted=false&config.startWithVideoMuted=false`;
+    const jitsiUrl = buildJitsiJoinUrl(roomName, displayName);
     window.open(jitsiUrl, '_blank');
     setInCall(true);
   };
@@ -85,7 +91,7 @@ export default function VideoCallPage() {
     setInCall(false);
     await updateAppointmentStatus('COMPLETED');
     toast.success('Consultation completed');
-    router.push(isDoctor ? '/dashboard/doctor' : '/dashboard/mother');
+    router.push(isAdmin ? '/dashboard/admin' : isDoctor ? '/dashboard/doctor' : '/dashboard/mother');
   };
 
   if (isLoading) {
@@ -106,7 +112,7 @@ export default function VideoCallPage() {
         <div className="max-w-7xl mx-auto px-4 py-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
-              <Link href={isDoctor ? '/dashboard/doctor' : '/dashboard/mother'}>
+              <Link href={isAdmin ? '/dashboard/admin' : isDoctor ? '/dashboard/doctor' : '/dashboard/mother'}>
                 <ArrowLeft className="w-5 h-5 text-gray-400 hover:text-white cursor-pointer" />
               </Link>
               <div>

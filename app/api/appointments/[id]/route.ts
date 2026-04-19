@@ -30,8 +30,8 @@ export async function GET(
       return Response.json({ message: 'Appointment not found' }, { status: 404 });
     }
 
-    // Check access
-    if (appointment.patientId !== user.id && appointment.doctorId !== user.id) {
+    // Allow the patient, assigned doctor, or admin to join the shared call.
+    if (user.role !== 'ADMIN' && appointment.patientId !== user.id && appointment.doctorId !== user.id) {
       return forbiddenResponse();
     }
 
@@ -78,7 +78,7 @@ export async function PUT(
       return Response.json({ message: 'Appointment not found' }, { status: 404 });
     }
 
-    if (appointment.patientId !== user.id && appointment.doctorId !== user.id) {
+    if (user.role !== 'ADMIN' && appointment.patientId !== user.id && appointment.doctorId !== user.id) {
       return forbiddenResponse();
     }
 
@@ -119,7 +119,7 @@ export async function DELETE(
       return Response.json({ message: 'Appointment not found' }, { status: 404 });
     }
 
-    if (appointment.patientId !== user.id && appointment.doctorId !== user.id) {
+    if (user.role !== 'ADMIN' && appointment.patientId !== user.id && appointment.doctorId !== user.id) {
       return forbiddenResponse();
     }
 
