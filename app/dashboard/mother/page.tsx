@@ -105,69 +105,24 @@ export default function MotherDashboard() {
       const data = await res.json();
 
       if (res.ok) {
-        toast.success('Meeting room created! Doctors are being notified.');
+        toast.success('Meeting room created! Doctors and admin are being notified.');
         setShowMeetModal(false);
         setMeetReason('');
 
         if (data.appointmentId) {
-          // Notify doctors before navigation
-          if (data.onCallDoctors?.length > 0 && (data.appointmentId || data.roomLink)) {
-            try {
-              const notifyPayload: any = {
-                doctorIds: data.onCallDoctors.map((doc: { id: string }) => doc.id),
-                reason: meetReason || 'Immediate consultation',
-              };
-              if (data.appointmentId) {
-                notifyPayload.appointmentId = data.appointmentId;
-              } else if (data.roomLink) {
-                notifyPayload.roomLink = data.roomLink;
-              }
-              await fetch('/api/notifyDoctors', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  Authorization: `Bearer ${token}`,
-                },
-                body: JSON.stringify(notifyPayload),
-              });
-            } catch (e) {
-              // Optionally log or toast error
-              console.error('Failed to notify doctors', e);
-            }
-          }
-          if (data.appointmentId) {
-            router.push(`/video/${data.appointmentId}`);
+          // Appointment created — go to the video page (same room as doctor + admin)
+          router.push(`/video/${data.appointmentId}`);
+        } else {
+          // No doctor available yet — open the room link directly
+          // Admin will assign a doctor shortly; patient waits in the room
+          const roomLink: string = data.roomLink || '';
+          if (roomLink.startsWith('https://meet.jit.si/')) {
+            window.open(roomLink, '_blank');
+            toast.info('Waiting for a doctor — admin has been notified and will assign one shortly.');
           } else {
-            // Validate roomLink before opening
-            let safeToOpen = false;
-            if (typeof data.roomLink === 'string') {
-              try {
-                const url = new URL(data.roomLink);
-                // Replace with your actual production domains
-                const allowedDomains = ['healthsos.com', 'meet.ffmuc.net', 'meet.jit.si', 'zoom.us'];
-                const normalizedHost = url.hostname.toLowerCase().replace(/\.$/, '');
-                safeToOpen =
-                  url.protocol === 'https:' &&
-                  allowedDomains.some((domain) => {
-                    const d = domain.toLowerCase().replace(/\.$/, '');
-                    return (
-                      normalizedHost === d ||
-                      normalizedHost.endsWith('.' + d)
-                    );
-                  });
-              } catch (e) {
-                // Invalid URL
-              }
-            }
-            if (safeToOpen) {
-              window.open(data.roomLink, '_blank');
-            } else {
-              toast.error('Invalid or unsafe meeting link.');
-            }
+            toast.error('Could not open meeting link.');
           }
         }
-
-        // (Notify logic moved above navigation)
       } else {
         toast.error(data.message || 'Failed to create meeting');
       }

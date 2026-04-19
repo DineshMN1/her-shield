@@ -11,9 +11,8 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { reason } = body;
 
-    const roomId = `instant-${user.id}-${Date.now()}`;
-    // Keep instant meet provider aligned with scheduled video calls (no account required).
-    const roomLink = `https://meet.ffmuc.net/${roomId}`;
+    const roomId = `instant-${user.id.replace(/-/g, '')}-${Date.now()}`;
+    const roomLink = `https://meet.jit.si/${roomId}`;
 
     // Get patient's primary doctor
     const patient = await prisma.user.findUnique({
@@ -137,6 +136,7 @@ export async function POST(request: NextRequest) {
             roomId,
             patientId: user.id,
             patientName: `${user.firstName} ${user.lastName}`,
+            appointmentId: appointmentId ?? null,
           },
         })),
       });

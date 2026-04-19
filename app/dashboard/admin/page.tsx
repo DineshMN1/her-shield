@@ -71,12 +71,23 @@ interface InstantMeetAlert {
     roomLink?: string;
     roomId?: string;
     patientName?: string;
+    patientId?: string;
+    appointmentId?: string;
   };
 }
 
-function getInstantMeetJoinUrl(data?: InstantMeetAlert['data']) {
+interface RegisteredDoctor {
+  id: string;
+  name: string;
+  phone: string;
+  specialization: string;
+}
+
+function getInstantMeetJoinUrl(data?: InstantMeetAlert['data']): string | undefined {
   if (!data) return undefined;
-  if (data.roomId) return `https://meet.ffmuc.net/${encodeURIComponent(data.roomId)}`;
+  // Prefer appointment-based video page so all parties share the same room
+  if (data.appointmentId) return `/video/${data.appointmentId}`;
+  if (data.roomId) return `https://meet.jit.si/${data.roomId}`;
   return data.roomLink;
 }
 
@@ -92,6 +103,9 @@ export default function AdminDashboard() {
   const [searchUsers, setSearchUsers] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
   const [activeInstantMeetAlert, setActiveInstantMeetAlert] = useState<InstantMeetAlert | null>(null);
+  const [registeredDoctors, setRegisteredDoctors] = useState<RegisteredDoctor[]>([]);
+  const [selectedDoctorId, setSelectedDoctorId] = useState('');
+  const [transferring, setTransferring] = useState(false);
   const seenNotificationIdsRef = useRef<Set<string>>(new Set());
 
   const [newOrg, setNewOrg] = useState({
@@ -219,6 +233,47 @@ export default function AdminDashboard() {
     }
   };
 
+  const fetchRegisteredDoctors = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/doctors', { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) {
+        const data = await res.json();
+        setRegisteredDoctors(data.doctors || []);
+      }
+    } catch { /* ignore */ }
+  };
+
+  const handleTransferMeet = async () => {
+    if (!selectedDoctorId || !activeInstantMeetAlert?.data) return;
+    setTransferring(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/instant-meet/transfer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          doctorId: selectedDoctorId,
+          patientId: activeInstantMeetAlert.data.patientId,
+          roomId: activeInstantMeetAlert.data.roomId,
+          appointmentId: activeInstantMeetAlert.data.appointmentId ?? null,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast.success(`Transferred to Dr. — both parties notified`);
+        setActiveInstantMeetAlert(null);
+        setSelectedDoctorId('');
+      } else {
+        toast.error(data.message || 'Transfer failed');
+      }
+    } catch {
+      toast.error('Transfer failed');
+    } finally {
+      setTransferring(false);
+    }
+  };
+
   const handleAddOrganization = async () => {
     if (!newOrg.name || !newOrg.phone) {
       toast.error('Name and phone are required');
@@ -325,34 +380,57 @@ export default function AdminDashboard() {
   return (
     <div className="min-h-screen bg-gray-50">
       {activeInstantMeetAlert && (
-        <div className="fixed top-20 right-4 z-50 w-[380px] max-w-[92vw] bg-red-600 text-white rounded-xl shadow-2xl p-4 border border-red-500">
+        <div className="fixed top-16 right-4 z-50 w-[400px] max-w-[95vw] bg-red-600 text-white rounded-xl shadow-2xl p-4 border border-red-500">
           <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-xs uppercase tracking-wide opacity-90">Instant Meet Alert</p>
+            <div className="flex-1">
+              <p className="text-xs uppercase tracking-wide opacity-90">🚨 Instant Meet Alert</p>
               <h3 className="font-bold">{activeInstantMeetAlert.title}</h3>
               <p className="text-sm mt-1 text-red-50">{activeInstantMeetAlert.body}</p>
               {activeInstantMeetAlert.data?.patientName && (
-                <p className="text-xs mt-2 text-red-100">Patient: {activeInstantMeetAlert.data.patientName}</p>
+                <p className="text-xs mt-1 text-red-100 font-medium">Patient: {activeInstantMeetAlert.data.patientName}</p>
               )}
             </div>
-            <button
-              onClick={() => setActiveInstantMeetAlert(null)}
-              className="text-white/90 hover:text-white"
-              aria-label="Dismiss instant meet alert"
-            >
+            <button onClick={() => { setActiveInstantMeetAlert(null); setSelectedDoctorId(''); }} className="text-white/90 hover:text-white shrink-0">
               <X className="w-5 h-5" />
             </button>
           </div>
+
+          {/* Join Meet button */}
           {getInstantMeetJoinUrl(activeInstantMeetAlert.data) && (
             <a
-              href={getInstantMeetJoinUrl(activeInstantMeetAlert.data)}
-              target="_blank"
+              href={getInstantMeetJoinUrl(activeInstantMeetAlert.data)!}
+              target={activeInstantMeetAlert.data?.appointmentId ? '_self' : '_blank'}
               rel="noopener noreferrer"
               className="mt-3 inline-flex items-center rounded-lg bg-white text-red-600 px-3 py-1.5 text-sm font-semibold"
             >
-              Open Meet
+              Join Meet
             </a>
           )}
+
+          {/* Transfer to Doctor section */}
+          <div className="mt-3 pt-3 border-t border-red-500">
+            <p className="text-xs font-semibold text-red-100 mb-2">Transfer to a Doctor</p>
+            <select
+              className="w-full text-gray-800 text-sm rounded-lg px-3 py-2 mb-2"
+              value={selectedDoctorId}
+              onFocus={fetchRegisteredDoctors}
+              onChange={(e) => setSelectedDoctorId(e.target.value)}
+            >
+              <option value="">Select a registered doctor...</option>
+              {registeredDoctors.map((d) => (
+                <option key={d.id} value={d.id}>
+                  Dr. {d.name} — {d.specialization}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={handleTransferMeet}
+              disabled={!selectedDoctorId || transferring}
+              className="w-full bg-white text-red-600 font-semibold text-sm py-2 rounded-lg disabled:opacity-50 hover:bg-red-50 transition-colors"
+            >
+              {transferring ? 'Transferring...' : 'Transfer & Notify Doctor'}
+            </button>
+          </div>
         </div>
       )}
       {/* Header */}

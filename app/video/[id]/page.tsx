@@ -16,7 +16,12 @@ export default function VideoCallPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [inCall, setInCall] = useState(false);
 
-  const roomName = `HealthSOS${appointmentId.replace(/-/g, '')}`;
+  // For instant meets the appointment has a stored roomId — use it so all parties share the same room.
+  // For scheduled appointments fall back to the appointment ID.
+  const roomName = appointment?.roomId
+    ? appointment.roomId.replace(/-/g, '')
+    : `HealthSOS${appointmentId.replace(/-/g, '')}`;
+
   const isDoctor = currentUser?.role === 'DOCTOR';
 
   // Don't prepend "Dr." — DB may already include it in the stored name
@@ -69,8 +74,8 @@ export default function VideoCallPage() {
   };
 
   const joinCall = () => {
+    if (!roomName) return; // wait until appointment loaded
     updateAppointmentStatus('IN_PROGRESS');
-    // Open Jitsi in a new tab — avoids all iframe/X-Frame-Options restrictions
     const jitsiUrl = `https://meet.jit.si/${roomName}#userInfo.displayName=${encodeURIComponent(displayName)}&config.prejoinPageEnabled=false&config.startWithAudioMuted=false&config.startWithVideoMuted=false`;
     window.open(jitsiUrl, '_blank');
     setInCall(true);

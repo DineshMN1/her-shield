@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ec4899"/>
+      <stop offset="100%" stop-color="#a855f7"/>
+    </linearGradient>
+  </defs>
+  <!-- Rounded square background -->
+  <rect width="512" height="512" rx="110" ry="110" fill="url(#grad)"/>
+  <!-- White heart -->
+  <path d="M256 370
+    C256 370 128 280 128 196
+    C128 155 160 128 200 128
+    C224 128 246 142 256 156
+    C266 142 288 128 312 128
+    C352 128 384 155 384 196
+    C384 280 256 370 256 370Z"
+    fill="white"/>
+  <!-- Small SOS cross -->
+  <rect x="244" y="200" width="24" height="80" rx="6" fill="#ec4899"/>
+  <rect x="216" y="228" width="80" height="24" rx="6" fill="#ec4899"/>
+</svg>
