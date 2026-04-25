@@ -73,6 +73,13 @@ export default function VideoCallPage() {
     };
   }, []);
 
+  // Attach local stream to the PiP video element once it mounts (inCall = true)
+  useEffect(() => {
+    if (inCall && localVideoRef.current && localStreamRef.current) {
+      localVideoRef.current.srcObject = localStreamRef.current;
+    }
+  }, [inCall]);
+
   const fetchAppointmentDetails = async () => {
     const token = localStorage.getItem('token');
     try {
@@ -155,7 +162,7 @@ export default function VideoCallPage() {
 
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       localStreamRef.current = stream;
-      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+      // srcObject is set by the useEffect below once inCall=true renders the PiP element
 
       const myPeerId = buildPeerId(appointmentId, currentUser.id);
 
