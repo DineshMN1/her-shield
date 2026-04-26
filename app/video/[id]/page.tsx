@@ -1,21 +1,33 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Video, ArrowLeft, PhoneOff, Mic, MicOff, VideoOff, Users } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import Link from 'next/link';
 
-// Deterministic peer ID from appointment + user IDs (alphanumeric only, max 36 chars)
-function buildPeerId(appointmentId: string, userId: string) {
-  const aid = appointmentId.replace(/-/g, '').slice(0, 14);
-  const uid = userId.replace(/-/g, '').slice(0, 14);
-  return `hs${aid}${uid}`;
-}
+const ICE_CONFIG: RTCConfiguration = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+  ],
+};
 
 function RemoteVideo({ stream }: { stream: MediaStream }) {
   const ref = useRef<HTMLVideoElement>(null);
-  useEffect(() => { if (ref.current) ref.current.srcObject = stream; }, [stream]);
+  useEffect(() => {
+    if (ref.current) ref.current.srcObject = stream;
+  }, [stream]);
   return <video ref={ref} autoPlay playsInline className="w-full h-full object-cover bg-gray-800" />;
 }
 
@@ -29,15 +41,17 @@ export default function VideoCallPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [inCall, setInCall] = useState(false);
   const [connecting, setConnecting] = useState(false);
-  const [peers, setPeers] = useState<Record<string, MediaStream>>({});
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [audioMuted, setAudioMuted] = useState(false);
   const [videoOff, setVideoOff] = useState(false);
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
-  const peerRef = useRef<any>(null);
-  const connectedIds = useRef<Set<string>>(new Set());
-  const retryTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const pcRef = useRef<RTCPeerConnection | null>(null);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const iceCandidateBuffer = useRef<RTCIceCandidateInit[]>([]);
+  const remoteDescSet = useRef(false);
+  const tokenRef = useRef('');
 
   const isDoctor = currentUser?.role === 'DOCTOR';
   const isAdmin = currentUser?.role === 'ADMIN';
@@ -48,40 +62,40 @@ export default function VideoCallPage() {
     ? '/dashboard/admin'
     : '/dashboard/mother';
 
-  const otherPartyName = isDoctor
-    ? appointment?.patientName
-    : appointment?.doctorName;
+  const otherPartyName = isDoctor ? appointment?.patientName : appointment?.doctorName;
 
   const displayName = currentUser
     ? isDoctor
-      ? `Dr. ${currentUser.firstName} ${currentUser.lastName}`.trim()
-      : `${currentUser.firstName} ${currentUser.lastName}`.trim()
+      ? `Dr. ${currentUser.firstName} ${currentUser.lastName}`
+      : `${currentUser.firstName} ${currentUser.lastName}`
     : 'Guest';
 
+  // Load user + appointment on mount
   useEffect(() => {
     const userData = localStorage.getItem('user');
+    const token = localStorage.getItem('token') || '';
+    tokenRef.current = token;
     if (userData) setCurrentUser(JSON.parse(userData));
-    fetchAppointmentDetails();
+    fetchAppointment(token);
   }, []);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      Object.values(retryTimers.current).forEach(clearTimeout);
+      if (pollingRef.current) clearInterval(pollingRef.current);
       localStreamRef.current?.getTracks().forEach((t) => t.stop());
-      peerRef.current?.destroy();
+      pcRef.current?.close();
     };
   }, []);
 
-  // Attach local stream to the PiP video element once it mounts (inCall = true)
+  // Wire local stream to PiP element once call starts (element not rendered until inCall=true)
   useEffect(() => {
     if (inCall && localVideoRef.current && localStreamRef.current) {
       localVideoRef.current.srcObject = localStreamRef.current;
     }
   }, [inCall]);
 
-  const fetchAppointmentDetails = async () => {
-    const token = localStorage.getItem('token');
+  const fetchAppointment = async (token: string) => {
     try {
       const res = await fetch(`/api/appointments/${appointmentId}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -96,137 +110,167 @@ export default function VideoCallPage() {
   };
 
   const updateStatus = async (status: string) => {
-    const token = localStorage.getItem('token');
     try {
       await fetch(`/api/appointments/${appointmentId}`, {
         method: 'PUT',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: {
+          Authorization: `Bearer ${tokenRef.current}`,
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({ status }),
       });
     } catch {}
   };
 
-  const loadPeerJS = (): Promise<void> =>
-    new Promise((resolve, reject) => {
-      if ((window as any).Peer) { resolve(); return; }
-      const s = document.createElement('script');
-      s.src = 'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js';
-      s.onload = () => resolve();
-      s.onerror = () => reject(new Error('Failed to load video library'));
-      document.head.appendChild(s);
-    });
-
-  const answerCall = useCallback((call: any, stream: MediaStream) => {
-    call.answer(stream);
-    call.on('stream', (remote: MediaStream) => {
-      connectedIds.current.add(call.peer);
-      setPeers((p) => ({ ...p, [call.peer]: remote }));
-    });
-    call.on('close', () => {
-      connectedIds.current.delete(call.peer);
-      setPeers((p) => { const n = { ...p }; delete n[call.peer]; return n; });
-    });
-  }, []);
-
-  const callPeer = useCallback((remotePeerId: string, stream: MediaStream, attempt = 0) => {
-    if (connectedIds.current.has(remotePeerId) || !peerRef.current) return;
-
-    const call = peerRef.current.call(remotePeerId, stream);
-    if (!call) return;
-
-    call.on('stream', (remote: MediaStream) => {
-      connectedIds.current.add(remotePeerId);
-      clearTimeout(retryTimers.current[remotePeerId]);
-      setPeers((p) => ({ ...p, [remotePeerId]: remote }));
-    });
-
-    call.on('close', () => {
-      connectedIds.current.delete(remotePeerId);
-      setPeers((p) => { const n = { ...p }; delete n[remotePeerId]; return n; });
-    });
-
-    // Retry if peer not available yet (up to 2 minutes)
-    if (attempt < 24) {
-      retryTimers.current[remotePeerId] = setTimeout(() => {
-        if (!connectedIds.current.has(remotePeerId)) callPeer(remotePeerId, stream, attempt + 1);
-      }, 5000);
-    }
-  }, []);
-
   const startCall = async () => {
     if (!currentUser || !appointment) return;
     setConnecting(true);
 
-    try {
-      await loadPeerJS();
+    // Reset signaling state from any previous attempt
+    remoteDescSet.current = false;
+    iceCandidateBuffer.current = [];
 
+    try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       localStreamRef.current = stream;
-      // srcObject is set by the useEffect below once inCall=true renders the PiP element
 
-      const myPeerId = buildPeerId(appointmentId, currentUser.id);
+      const pc = new RTCPeerConnection(ICE_CONFIG);
+      pcRef.current = pc;
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
-      // Everyone the current user should try to call
-      const remotePeerIds: string[] = [];
-      if (appointment.patientId && currentUser.id !== appointment.patientId)
-        remotePeerIds.push(buildPeerId(appointmentId, appointment.patientId));
-      if (appointment.doctorId && currentUser.id !== appointment.doctorId)
-        remotePeerIds.push(buildPeerId(appointmentId, appointment.doctorId));
+      pc.ontrack = (event) => {
+        if (event.streams[0]) setRemoteStream(event.streams[0]);
+      };
 
-      const peer = new (window as any).Peer(myPeerId, {
-        config: {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            // Free TURN relay — replace with your own for production
-            { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-          ],
-        },
-      });
+      // The signal room is the appointment's roomId (instant meets) or the appointmentId itself
+      const roomId = appointment.roomId || appointmentId;
 
-      peerRef.current = peer;
+      // Determine the other party (patient calls doctor, doctor calls patient)
+      const otherId =
+        currentUser.id === appointment.patientId
+          ? appointment.doctorId
+          : appointment.patientId;
 
-      peer.on('open', () => {
+      if (!otherId) {
+        toast.error('Cannot identify the other participant for this call.');
         setConnecting(false);
-        setInCall(true);
-        updateStatus('IN_PROGRESS');
-        remotePeerIds.forEach((id) => callPeer(id, stream));
-      });
+        pc.close();
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
 
-      // Answer ALL incoming calls (from doctor, patient, or admin)
-      peer.on('call', (call: any) => answerCall(call, stream));
+      // Helper: post a signal to the DB addressed to the other party
+      const postSignal = async (type: string, payload: object) => {
+        await fetch('/api/video-signal', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${tokenRef.current}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            roomId,
+            recipientId: otherId,
+            type,
+            payload: JSON.stringify(payload),
+          }),
+        });
+      };
 
-      peer.on('error', (err: any) => {
-        if (err.type === 'unavailable-id') {
-          // Peer ID still registered — wait and retry
-          setTimeout(() => {
-            peerRef.current?.destroy();
-            startCall();
-          }, 3000);
-        } else if (err.type !== 'peer-unavailable') {
-          console.error('Peer error:', err);
+      // Send ICE candidates to the other party as they are gathered
+      pc.onicecandidate = ({ candidate }) => {
+        if (candidate) postSignal('candidate', candidate.toJSON());
+      };
+
+      // Deterministic initiator: lexicographically smaller user ID creates the offer
+      const isInitiator = currentUser.id < otherId;
+
+      if (isInitiator) {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await postSignal('offer', offer);
+      }
+
+      setConnecting(false);
+      setInCall(true);
+      updateStatus('IN_PROGRESS');
+
+      // Poll the DB every 1.5 s for signals addressed to me
+      pollingRef.current = setInterval(async () => {
+        try {
+          const res = await fetch(
+            `/api/video-signal?roomId=${encodeURIComponent(roomId)}`,
+            { headers: { Authorization: `Bearer ${tokenRef.current}` } }
+          );
+          const { signals = [] } = await res.json();
+
+          for (const signal of signals) {
+            if (signal.type === 'offer' && !remoteDescSet.current) {
+              // Received an offer — answer it
+              await pc.setRemoteDescription(
+                new RTCSessionDescription(JSON.parse(signal.payload))
+              );
+              remoteDescSet.current = true;
+              for (const c of iceCandidateBuffer.current) {
+                await pc.addIceCandidate(new RTCIceCandidate(c));
+              }
+              iceCandidateBuffer.current = [];
+              const answer = await pc.createAnswer();
+              await pc.setLocalDescription(answer);
+              await postSignal('answer', answer);
+
+            } else if (signal.type === 'answer' && !remoteDescSet.current) {
+              // Received answer to our offer
+              await pc.setRemoteDescription(
+                new RTCSessionDescription(JSON.parse(signal.payload))
+              );
+              remoteDescSet.current = true;
+              for (const c of iceCandidateBuffer.current) {
+                await pc.addIceCandidate(new RTCIceCandidate(c));
+              }
+              iceCandidateBuffer.current = [];
+
+            } else if (signal.type === 'candidate') {
+              const candidate = JSON.parse(signal.payload);
+              if (remoteDescSet.current) {
+                await pc.addIceCandidate(new RTCIceCandidate(candidate));
+              } else {
+                iceCandidateBuffer.current.push(candidate);
+              }
+            }
+          }
+        } catch (err) {
+          console.error('Signal poll error:', err);
         }
-      });
+      }, 1500);
+
     } catch (err: any) {
       setConnecting(false);
       if (err.name === 'NotAllowedError') {
         toast.error('Camera/microphone permission denied. Please allow access and try again.');
       } else {
-        toast.error('Failed to start video call.');
+        console.error('Start call error:', err);
+        toast.error('Failed to start video call. Please check camera/mic permissions.');
       }
     }
   };
 
   const endCall = async () => {
-    Object.values(retryTimers.current).forEach(clearTimeout);
-    retryTimers.current = {};
-    connectedIds.current.clear();
-    peerRef.current?.destroy();
-    peerRef.current = null;
+    if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
+    pcRef.current?.close();
+    pcRef.current = null;
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     localStreamRef.current = null;
-    setPeers({});
+    setRemoteStream(null);
     setInCall(false);
+    remoteDescSet.current = false;
+    iceCandidateBuffer.current = [];
+
+    const roomId = appointment?.roomId || appointmentId;
+    fetch(`/api/video-signal?roomId=${encodeURIComponent(roomId)}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${tokenRef.current}` },
+    }).catch(() => {});
+
     await updateStatus('COMPLETED');
     toast.success('Consultation completed');
     router.push(dashboardPath);
@@ -250,8 +294,6 @@ export default function VideoCallPage() {
     );
   }
 
-  const remoteEntries = Object.entries(peers);
-
   return (
     <div className="min-h-screen bg-gray-900 flex flex-col">
       {/* Header */}
@@ -267,10 +309,10 @@ export default function VideoCallPage() {
               <h1 className="text-white font-semibold">Video Consultation</h1>
               <p className="text-gray-400 text-sm">
                 {inCall
-                  ? `${remoteEntries.length > 0 ? remoteEntries.length + ' connected' : 'Waiting...'} · ${displayName}`
+                  ? `${remoteStream ? '1 connected' : 'Waiting for other party…'} · ${displayName}`
                   : otherPartyName
                   ? `with ${otherPartyName}`
-                  : 'Loading...'}
+                  : 'Loading…'}
               </p>
             </div>
           </div>
@@ -290,27 +332,22 @@ export default function VideoCallPage() {
       <div className="flex-1 relative overflow-hidden bg-gray-900">
         {inCall ? (
           <>
-            {/* Remote videos */}
-            <div
-              className={`w-full h-full grid gap-1 ${
-                remoteEntries.length > 1 ? 'grid-cols-2' : 'grid-cols-1'
-              }`}
-              style={{ height: 'calc(100vh - 130px)' }}
-            >
-              {remoteEntries.length === 0 ? (
-                <div className="flex items-center justify-center m-4 bg-gray-800 rounded-2xl">
+            {/* Remote video */}
+            <div className="w-full" style={{ height: 'calc(100vh - 130px)' }}>
+              {!remoteStream ? (
+                <div className="flex items-center justify-center h-full bg-gray-800 m-4 rounded-2xl">
                   <div className="text-center">
                     <Users className="w-12 h-12 text-gray-500 mx-auto mb-3" />
-                    <p className="text-gray-300 font-medium">Waiting for others to join…</p>
+                    <p className="text-gray-300 font-medium">Waiting for other party to join…</p>
                     <p className="text-gray-500 text-sm mt-1">They will connect automatically</p>
                   </div>
                 </div>
               ) : (
-                remoteEntries.map(([id, stream]) => <RemoteVideo key={id} stream={stream} />)
+                <RemoteVideo stream={remoteStream} />
               )}
             </div>
 
-            {/* Local video (PiP) */}
+            {/* Local video PiP */}
             <div className="absolute bottom-20 right-3 w-28 h-40 sm:w-36 sm:h-48 rounded-xl overflow-hidden shadow-xl border-2 border-gray-600 bg-gray-800">
               <video ref={localVideoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
               {videoOff && (
@@ -393,7 +430,7 @@ export default function VideoCallPage() {
               <ul className="text-blue-300 text-sm space-y-1">
                 <li>• Allow camera &amp; microphone when the browser asks</li>
                 <li>• Ensure you&apos;re in a quiet, well-lit area</li>
-                <li>• Others will connect automatically — no sharing of links needed</li>
+                <li>• The other party will connect automatically — no link sharing needed</li>
               </ul>
             </div>
 
@@ -416,7 +453,7 @@ export default function VideoCallPage() {
             </button>
 
             <p className="text-center text-gray-500 text-sm mt-3">
-              Peer-to-peer · encrypted · no login needed
+              End-to-end encrypted · peer-to-peer · no third-party servers
             </p>
           </div>
         )}

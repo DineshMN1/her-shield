@@ -45,6 +45,7 @@ export async function GET(
         specialty: appointment.doctor.doctorProfile?.specialization,
         date: appointment.scheduledAt.toISOString().split('T')[0],
         time: appointment.scheduledAt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+        roomId: appointment.roomId,
         status: appointment.status,
         type: appointment.type,
         reason: appointment.reason,

@@ -404,3 +404,18 @@ model EmergencyCall {
   @@index([status])
   @@index([createdAt])
 }
+
+// WebRTC signaling via DB (no external signaling server needed)
+model VideoSignal {
+  id          String   @id @default(cuid())
+  roomId      String
+  senderId    String
+  recipientId String
+  type        String   // 'offer' | 'answer' | 'candidate'
+  payload     String   // JSON-encoded SDP or RTCIceCandidate
+  consumed    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([roomId, recipientId, consumed])
+  @@index([createdAt])
+}
