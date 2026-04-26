@@ -410,7 +410,7 @@ model VideoSignal {
   id          String   @id @default(cuid())
   roomId      String
   senderId    String
-  recipientId String
+  recipientId String?  // null = broadcast to any room participant
   type        String   // 'offer' | 'answer' | 'candidate'
   payload     String   // JSON-encoded SDP or RTCIceCandidate
   consumed    Boolean  @default(false)

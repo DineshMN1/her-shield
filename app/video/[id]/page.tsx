@@ -28,7 +28,7 @@ function RemoteVideo({ stream }: { stream: MediaStream }) {
   useEffect(() => {
     if (ref.current) ref.current.srcObject = stream;
   }, [stream]);
-  return <video ref={ref} autoPlay playsInline className="w-full h-full object-cover bg-gray-800" />;
+  return <video ref={ref} autoPlay playsInline className="w-full h-full object-contain bg-gray-900" />;
 }
 
 export default function VideoCallPage() {
@@ -44,13 +44,22 @@ export default function VideoCallPage() {
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [audioMuted, setAudioMuted] = useState(false);
   const [videoOff, setVideoOff] = useState(false);
+  // 'unknown' | 'granted' | 'denied' | 'prompt'
+  const [camPermission, setCamPermission] = useState<string>('unknown');
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const iceCandidateBuffer = useRef<RTCIceCandidateInit[]>([]);
+
+  // Tracks the userId of whoever we're currently connected to
+  const peerUserIdRef = useRef<string | null>(null);
+  // Incoming ICE candidates buffered until remoteDescription is set
+  const recvCandidateBuffer = useRef<RTCIceCandidateInit[]>([]);
+  // Outgoing ICE candidates buffered until we know the peer's userId
+  const sendCandidateBuffer = useRef<RTCIceCandidateInit[]>([]);
   const remoteDescSet = useRef(false);
+
   const tokenRef = useRef('');
 
   const isDoctor = currentUser?.role === 'DOCTOR';
@@ -64,22 +73,30 @@ export default function VideoCallPage() {
 
   const otherPartyName = isDoctor ? appointment?.patientName : appointment?.doctorName;
 
-  const displayName = currentUser
-    ? isDoctor
-      ? `Dr. ${currentUser.firstName} ${currentUser.lastName}`
-      : `${currentUser.firstName} ${currentUser.lastName}`
+  const rawName = currentUser
+    ? `${currentUser.firstName} ${currentUser.lastName}`.trim()
     : 'Guest';
+  // Guard against names already stored with "Dr." prefix in the DB
+  const displayName = isDoctor && !rawName.startsWith('Dr.')
+    ? `Dr. ${rawName}`
+    : rawName;
 
-  // Load user + appointment on mount
   useEffect(() => {
     const userData = localStorage.getItem('user');
     const token = localStorage.getItem('token') || '';
     tokenRef.current = token;
     if (userData) setCurrentUser(JSON.parse(userData));
     fetchAppointment(token);
+
+    // Check camera permission state (Chrome/Firefox only — no error if unsupported)
+    if (navigator.permissions) {
+      navigator.permissions.query({ name: 'camera' as PermissionName }).then((status) => {
+        setCamPermission(status.state);
+        status.onchange = () => setCamPermission(status.state);
+      }).catch(() => {});
+    }
   }, []);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current);
@@ -88,7 +105,6 @@ export default function VideoCallPage() {
     };
   }, []);
 
-  // Wire local stream to PiP element once call starts (element not rendered until inCall=true)
   useEffect(() => {
     if (inCall && localVideoRef.current && localStreamRef.current) {
       localVideoRef.current.srcObject = localStreamRef.current;
@@ -126,9 +142,11 @@ export default function VideoCallPage() {
     if (!currentUser || !appointment) return;
     setConnecting(true);
 
-    // Reset signaling state from any previous attempt
+    // Reset all signaling state
     remoteDescSet.current = false;
-    iceCandidateBuffer.current = [];
+    peerUserIdRef.current = null;
+    recvCandidateBuffer.current = [];
+    sendCandidateBuffer.current = [];
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -142,59 +160,63 @@ export default function VideoCallPage() {
         if (event.streams[0]) setRemoteStream(event.streams[0]);
       };
 
-      // The signal room is the appointment's roomId (instant meets) or the appointmentId itself
       const roomId = appointment.roomId || appointmentId;
 
-      // Determine the other party (patient calls doctor, doctor calls patient)
-      const otherId =
-        currentUser.id === appointment.patientId
-          ? appointment.doctorId
-          : appointment.patientId;
-
-      if (!otherId) {
-        toast.error('Cannot identify the other participant for this call.');
-        setConnecting(false);
-        pc.close();
-        stream.getTracks().forEach((t) => t.stop());
-        return;
-      }
-
-      // Helper: post a signal to the DB addressed to the other party
-      const postSignal = async (type: string, payload: object) => {
+      // Helper: post a signal directly to a known peer
+      const postDirect = async (recipientId: string, type: string, payload: object) => {
         await fetch('/api/video-signal', {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${tokenRef.current}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            roomId,
-            recipientId: otherId,
-            type,
-            payload: JSON.stringify(payload),
-          }),
+          body: JSON.stringify({ roomId, recipientId, type, payload: JSON.stringify(payload) }),
         });
       };
 
-      // Send ICE candidates to the other party as they are gathered
-      pc.onicecandidate = ({ candidate }) => {
-        if (candidate) postSignal('candidate', candidate.toJSON());
+      // Helper: broadcast to anyone in the room (offer + initiator ICE candidates)
+      const postBroadcast = async (type: string, payload: object) => {
+        await fetch('/api/video-signal', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${tokenRef.current}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ roomId, recipientId: null, type, payload: JSON.stringify(payload) }),
+        });
       };
 
-      // Deterministic initiator: lexicographically smaller user ID creates the offer
-      const isInitiator = currentUser.id < otherId;
+      // When peer's userId is known, flush any buffered outgoing ICE candidates
+      const flushSendBuffer = (peerId: string) => {
+        const buffered = sendCandidateBuffer.current.splice(0);
+        buffered.forEach((c) => postDirect(peerId, 'candidate', c));
+      };
 
-      if (isInitiator) {
+      pc.onicecandidate = ({ candidate }) => {
+        if (!candidate) return;
+        if (peerUserIdRef.current) {
+          postDirect(peerUserIdRef.current, 'candidate', candidate.toJSON());
+        } else {
+          // Peer not known yet (we're the initiator, waiting for the answer)
+          sendCandidateBuffer.current.push(candidate.toJSON());
+        }
+      };
+
+      // Patient is ALWAYS the initiator — admin/doctor are always the responders.
+      // This ensures exactly one offer is broadcast per call regardless of join order.
+      const isPatient = currentUser.id === appointment.patientId;
+
+      if (isPatient) {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        await postSignal('offer', offer);
+        await postBroadcast('offer', offer);
       }
 
       setConnecting(false);
       setInCall(true);
       updateStatus('IN_PROGRESS');
 
-      // Poll the DB every 1.5 s for signals addressed to me
+      // Poll DB every 1.5 s for signals in this room addressed to me
       pollingRef.current = setInterval(async () => {
         try {
           const res = await fetch(
@@ -204,37 +226,52 @@ export default function VideoCallPage() {
           const { signals = [] } = await res.json();
 
           for (const signal of signals) {
-            if (signal.type === 'offer' && !remoteDescSet.current) {
-              // Received an offer — answer it
+            // ── Received an offer (we are doctor / admin) ─────────────────
+            if (signal.type === 'offer' && !isPatient && !remoteDescSet.current) {
+              peerUserIdRef.current = signal.senderId;
               await pc.setRemoteDescription(
                 new RTCSessionDescription(JSON.parse(signal.payload))
               );
               remoteDescSet.current = true;
-              for (const c of iceCandidateBuffer.current) {
+
+              // Flush received ICE candidates that arrived before the offer
+              for (const c of recvCandidateBuffer.current) {
                 await pc.addIceCandidate(new RTCIceCandidate(c));
               }
-              iceCandidateBuffer.current = [];
+              recvCandidateBuffer.current = [];
+
+              // Create + send answer directly to the patient
               const answer = await pc.createAnswer();
               await pc.setLocalDescription(answer);
-              await postSignal('answer', answer);
+              await postDirect(signal.senderId, 'answer', answer);
 
-            } else if (signal.type === 'answer' && !remoteDescSet.current) {
-              // Received answer to our offer
+              // ICE candidates generated during createAnswer are now sent directly
+              // (peerUserIdRef.current is already set above)
+              flushSendBuffer(signal.senderId);
+
+            // ── Received an answer (we are patient / initiator) ───────────
+            } else if (signal.type === 'answer' && isPatient && !remoteDescSet.current) {
+              peerUserIdRef.current = signal.senderId;
               await pc.setRemoteDescription(
                 new RTCSessionDescription(JSON.parse(signal.payload))
               );
               remoteDescSet.current = true;
-              for (const c of iceCandidateBuffer.current) {
+
+              for (const c of recvCandidateBuffer.current) {
                 await pc.addIceCandidate(new RTCIceCandidate(c));
               }
-              iceCandidateBuffer.current = [];
+              recvCandidateBuffer.current = [];
 
+              // Send any ICE candidates that were buffered while waiting for the answer
+              flushSendBuffer(signal.senderId);
+
+            // ── ICE candidate from peer ───────────────────────────────────
             } else if (signal.type === 'candidate') {
               const candidate = JSON.parse(signal.payload);
               if (remoteDescSet.current) {
                 await pc.addIceCandidate(new RTCIceCandidate(candidate));
               } else {
-                iceCandidateBuffer.current.push(candidate);
+                recvCandidateBuffer.current.push(candidate);
               }
             }
           }
@@ -245,11 +282,31 @@ export default function VideoCallPage() {
 
     } catch (err: any) {
       setConnecting(false);
-      if (err.name === 'NotAllowedError') {
-        toast.error('Camera/microphone permission denied. Please allow access and try again.');
+      console.error('Start call error:', err.name, err.message, err);
+
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        // Permissions were denied — browser won't re-prompt after page reload
+        toast.error(
+          'Camera/microphone access was blocked. Click the camera icon in your browser address bar, allow access, then refresh the page.',
+          { duration: 8000 }
+        );
+      } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+        toast.error(
+          'Camera or microphone is in use by another app (Teams, Zoom, etc.). Close those apps and try again.',
+          { duration: 6000 }
+        );
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        toast.error('No camera or microphone found. Please connect a device and try again.');
+      } else if (err.name === 'OverconstrainedError') {
+        // Retry with audio-only video constraints as fallback
+        toast.error('Camera resolution not supported. Try a different camera or browser.');
+      } else if (err.name === 'SecurityError') {
+        toast.error('Video calls require a secure connection (HTTPS). Please use the full site URL.');
       } else {
-        console.error('Start call error:', err);
-        toast.error('Failed to start video call. Please check camera/mic permissions.');
+        toast.error(
+          `Could not start call: ${err.message || err.name || 'unknown error'}. Try refreshing the page.`,
+          { duration: 6000 }
+        );
       }
     }
   };
@@ -263,7 +320,9 @@ export default function VideoCallPage() {
     setRemoteStream(null);
     setInCall(false);
     remoteDescSet.current = false;
-    iceCandidateBuffer.current = [];
+    peerUserIdRef.current = null;
+    recvCandidateBuffer.current = [];
+    sendCandidateBuffer.current = [];
 
     const roomId = appointment?.roomId || appointmentId;
     fetch(`/api/video-signal?roomId=${encodeURIComponent(roomId)}`, {
@@ -295,7 +354,7 @@ export default function VideoCallPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 flex flex-col">
+    <div className="h-screen bg-gray-900 flex flex-col overflow-hidden">
       {/* Header */}
       <div className="bg-gray-800 border-b border-gray-700 shrink-0">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
@@ -328,12 +387,12 @@ export default function VideoCallPage() {
         </div>
       </div>
 
-      {/* Main area */}
+      {/* Main area — flex-1 fills exactly the space left after the header */}
       <div className="flex-1 relative overflow-hidden bg-gray-900">
         {inCall ? (
           <>
-            {/* Remote video */}
-            <div className="w-full" style={{ height: 'calc(100vh - 130px)' }}>
+            {/* Remote video — h-full fills the entire flex-1 container */}
+            <div className="w-full h-full">
               {!remoteStream ? (
                 <div className="flex items-center justify-center h-full bg-gray-800 m-4 rounded-2xl">
                   <div className="text-center">
@@ -347,7 +406,7 @@ export default function VideoCallPage() {
               )}
             </div>
 
-            {/* Local video PiP */}
+            {/* Local PiP */}
             <div className="absolute bottom-20 right-3 w-28 h-40 sm:w-36 sm:h-48 rounded-xl overflow-hidden shadow-xl border-2 border-gray-600 bg-gray-800">
               <video ref={localVideoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
               {videoOff && (
@@ -387,7 +446,6 @@ export default function VideoCallPage() {
             </div>
           </>
         ) : (
-          /* Pre-call screen */
           <div className="max-w-2xl mx-auto px-4 py-12">
             <div className="text-center mb-8">
               <div className="bg-gray-800 w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6">
@@ -425,19 +483,35 @@ export default function VideoCallPage() {
               </div>
             </div>
 
-            <div className="bg-blue-900/30 border border-blue-800 rounded-xl p-5 mb-8">
-              <h3 className="text-blue-400 font-semibold mb-2">Before you join</h3>
-              <ul className="text-blue-300 text-sm space-y-1">
-                <li>• Allow camera &amp; microphone when the browser asks</li>
-                <li>• Ensure you&apos;re in a quiet, well-lit area</li>
-                <li>• The other party will connect automatically — no link sharing needed</li>
-              </ul>
-            </div>
+            {camPermission === 'denied' ? (
+              <div className="bg-red-900/40 border border-red-700 rounded-xl p-5 mb-8">
+                <h3 className="text-red-400 font-semibold mb-1">Camera/microphone blocked</h3>
+                <p className="text-red-300 text-sm mb-3">
+                  Your browser has blocked access. Click the camera icon in the address bar,
+                  set Camera &amp; Microphone to <strong>Allow</strong>, then reload this page.
+                </p>
+                <button
+                  onClick={() => window.location.reload()}
+                  className="bg-red-600 hover:bg-red-700 text-white text-sm px-4 py-2 rounded-lg"
+                >
+                  Reload page
+                </button>
+              </div>
+            ) : (
+              <div className="bg-blue-900/30 border border-blue-800 rounded-xl p-5 mb-8">
+                <h3 className="text-blue-400 font-semibold mb-2">Before you join</h3>
+                <ul className="text-blue-300 text-sm space-y-1">
+                  <li>• Allow camera &amp; microphone when the browser asks</li>
+                  <li>• Ensure you&apos;re in a quiet, well-lit area</li>
+                  <li>• The other party will connect automatically</li>
+                </ul>
+              </div>
+            )}
 
             <button
               onClick={startCall}
-              disabled={connecting}
-              className="w-full bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white font-semibold py-4 px-6 rounded-xl flex items-center justify-center space-x-3 transition-colors"
+              disabled={connecting || camPermission === 'denied'}
+              className="w-full bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-4 px-6 rounded-xl flex items-center justify-center space-x-3 transition-colors"
             >
               {connecting ? (
                 <>

@@ -2,7 +2,9 @@ import { NextRequest } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getAuthUser, unauthorizedResponse } from '@/lib/auth';
 
-// POST /api/video-signal — store a WebRTC signal (offer/answer/candidate)
+// POST /api/video-signal — store a WebRTC signal
+// recipientId = null  → broadcast to anyone in the room (used for initial offer)
+// recipientId = userId → direct to a specific peer (answer, ICE candidates)
 export async function POST(request: NextRequest) {
   const user = await getAuthUser(request);
   if (!user) return unauthorizedResponse();
@@ -10,12 +12,18 @@ export async function POST(request: NextRequest) {
   try {
     const { roomId, recipientId, type, payload } = await request.json();
 
-    if (!roomId || !recipientId || !type || !payload) {
+    if (!roomId || !type || !payload) {
       return Response.json({ message: 'Missing required fields' }, { status: 400 });
     }
 
     const signal = await prisma.videoSignal.create({
-      data: { roomId, senderId: user.id, recipientId, type, payload },
+      data: {
+        roomId,
+        senderId: user.id,
+        recipientId: recipientId ?? null,
+        type,
+        payload,
+      },
     });
 
     return Response.json({ id: signal.id });
@@ -25,7 +33,9 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// GET /api/video-signal?roomId=X — fetch and consume unread signals for the current user
+// GET /api/video-signal?roomId=X
+// Returns unconsumed signals for this user: direct (recipientId=me) OR broadcast (recipientId=null)
+// Excludes signals sent by this user. Marks returned signals as consumed.
 export async function GET(request: NextRequest) {
   const user = await getAuthUser(request);
   if (!user) return unauthorizedResponse();
@@ -34,17 +44,18 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const roomId = searchParams.get('roomId');
 
-    if (!roomId) {
-      return Response.json({ signals: [] });
-    }
+    if (!roomId) return Response.json({ signals: [] });
 
-    // Fetch all unconsumed signals addressed to this user in this room
     const signals = await prisma.videoSignal.findMany({
-      where: { roomId, recipientId: user.id, consumed: false },
+      where: {
+        roomId,
+        consumed: false,
+        NOT: { senderId: user.id },
+        OR: [{ recipientId: user.id }, { recipientId: null }],
+      },
       orderBy: { createdAt: 'asc' },
     });
 
-    // Mark them consumed atomically
     if (signals.length > 0) {
       await prisma.videoSignal.updateMany({
         where: { id: { in: signals.map((s) => s.id) } },
@@ -66,7 +77,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// DELETE /api/video-signal?roomId=X — clean up old signals for a room (called on call end)
+// DELETE /api/video-signal?roomId=X — clean up consumed signals on call end
 export async function DELETE(request: NextRequest) {
   const user = await getAuthUser(request);
   if (!user) return unauthorizedResponse();
@@ -75,9 +86,7 @@ export async function DELETE(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const roomId = searchParams.get('roomId');
 
-    if (!roomId) {
-      return Response.json({ message: 'roomId required' }, { status: 400 });
-    }
+    if (!roomId) return Response.json({ message: 'roomId required' }, { status: 400 });
 
     await prisma.videoSignal.deleteMany({
       where: { roomId, consumed: true },

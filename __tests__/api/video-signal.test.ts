@@ -1,14 +1,17 @@
 /**
  * Unit + integration tests for /api/video-signal
  *
- * Prisma and auth are mocked so the tests run without a real DB.
- * Each test calls the route handler directly (no HTTP server needed).
+ * Prisma and auth are mocked — no real DB required.
+ * Covers the broadcast-offer signaling model:
+ *   - Patient posts offer with recipientId=null (broadcast)
+ *   - Doctor/admin polls and finds the broadcast offer
+ *   - Answer and ICE candidates are sent directly (recipientId=userId)
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
-// ── Hoisted mocks — must be declared before any import that depends on them ─
+// ── Hoisted mocks ─────────────────────────────────────────────────────────
 
 const mockPrisma = vi.hoisted(() => ({
   videoSignal: {
@@ -25,52 +28,41 @@ vi.mock('@/lib/auth', () => ({
   getAuthUser: vi.fn(),
   unauthorizedResponse: () =>
     new Response(JSON.stringify({ message: 'Unauthorized' }), { status: 401 }),
-  forbiddenResponse: () =>
-    new Response(JSON.stringify({ message: 'Forbidden' }), { status: 403 }),
 }));
 
-const mockUser = { id: 'user-patient-1', role: 'PATIENT', firstName: 'Jane', lastName: 'Doe' };
-
-// Import after mocks are registered
 import { POST, GET, DELETE } from '@/app/api/video-signal/route';
 import { getAuthUser } from '@/lib/auth';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+const patient = { id: 'patient-aaa', role: 'PATIENT', firstName: 'Jane', lastName: 'Doe' };
+const doctor  = { id: 'doctor-bbb',  role: 'DOCTOR',  firstName: 'Priya', lastName: 'Sharma' };
+const admin   = { id: 'admin-ccc',   role: 'ADMIN',   firstName: 'Admin', lastName: 'User' };
+
 function makeRequest(method: string, body?: object, url = 'http://localhost/api/video-signal') {
   return new NextRequest(url, {
     method,
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer fake-token' },
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer fake' },
     body: body ? JSON.stringify(body) : undefined,
   });
 }
 
-// ── Tests ──────────────────────────────────────────────────────────────────
-
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(getAuthUser).mockResolvedValue(mockUser as any);
+  vi.mocked(getAuthUser).mockResolvedValue(patient as any);
 });
 
-// ── POST ───────────────────────────────────────────────────────────────────
+// ── POST ──────────────────────────────────────────────────────────────────
 
 describe('POST /api/video-signal', () => {
-  it('creates a signal and returns its id', async () => {
-    const created = {
-      id: 'sig-1',
-      roomId: 'room-abc',
-      senderId: mockUser.id,
-      recipientId: 'user-doctor-2',
-      type: 'offer',
-      payload: JSON.stringify({ type: 'offer', sdp: 'v=0...' }),
-    };
-    mockPrisma.videoSignal.create.mockResolvedValue(created);
+  it('creates a broadcast offer (recipientId=null) and returns id', async () => {
+    mockPrisma.videoSignal.create.mockResolvedValue({ id: 'sig-1' });
 
     const req = makeRequest('POST', {
-      roomId: created.roomId,
-      recipientId: created.recipientId,
-      type: created.type,
-      payload: created.payload,
+      roomId: 'room-x',
+      recipientId: null,        // broadcast — patient's offer to anyone
+      type: 'offer',
+      payload: JSON.stringify({ type: 'offer', sdp: 'v=0...' }),
     });
 
     const res = await POST(req);
@@ -79,300 +71,290 @@ describe('POST /api/video-signal', () => {
     expect(res.status).toBe(200);
     expect(body.id).toBe('sig-1');
     expect(mockPrisma.videoSignal.create).toHaveBeenCalledWith({
-      data: {
-        roomId: 'room-abc',
-        senderId: mockUser.id,
-        recipientId: 'user-doctor-2',
-        type: 'offer',
-        payload: created.payload,
-      },
+      data: expect.objectContaining({ recipientId: null, type: 'offer' }),
     });
+  });
+
+  it('creates a direct answer (recipientId=patientId)', async () => {
+    vi.mocked(getAuthUser).mockResolvedValue(doctor as any);
+    mockPrisma.videoSignal.create.mockResolvedValue({ id: 'sig-2' });
+
+    const req = makeRequest('POST', {
+      roomId: 'room-x',
+      recipientId: patient.id,  // direct answer to patient
+      type: 'answer',
+      payload: '{"type":"answer","sdp":"v=0..."}',
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(mockPrisma.videoSignal.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ recipientId: patient.id, type: 'answer', senderId: doctor.id }),
+    });
+  });
+
+  it('returns 400 when roomId, type, or payload is missing', async () => {
+    const cases = [
+      { type: 'offer', payload: '{}' },           // missing roomId
+      { roomId: 'r', payload: '{}' },             // missing type
+      { roomId: 'r', type: 'offer' },             // missing payload
+    ];
+    for (const body of cases) {
+      const res = await POST(makeRequest('POST', body));
+      expect(res.status).toBe(400);
+    }
+    expect(mockPrisma.videoSignal.create).not.toHaveBeenCalled();
   });
 
   it('returns 401 when not authenticated', async () => {
     vi.mocked(getAuthUser).mockResolvedValue(null);
-
-    const req = makeRequest('POST', { roomId: 'r', recipientId: 'u', type: 'offer', payload: '{}' });
-    const res = await POST(req);
-
+    const res = await POST(makeRequest('POST', { roomId: 'r', type: 'offer', payload: '{}' }));
     expect(res.status).toBe(401);
-    expect(mockPrisma.videoSignal.create).not.toHaveBeenCalled();
-  });
-
-  it('returns 400 when required fields are missing', async () => {
-    const req = makeRequest('POST', { roomId: 'r' }); // missing recipientId, type, payload
-    const res = await POST(req);
-
-    expect(res.status).toBe(400);
-    expect(mockPrisma.videoSignal.create).not.toHaveBeenCalled();
-  });
-
-  it('stores offer, answer, and candidate types', async () => {
-    const types = ['offer', 'answer', 'candidate'];
-
-    for (const type of types) {
-      mockPrisma.videoSignal.create.mockResolvedValue({ id: `sig-${type}` });
-
-      const req = makeRequest('POST', {
-        roomId: 'room-x',
-        recipientId: 'other-user',
-        type,
-        payload: '{"sdp":"..."}',
-      });
-      const res = await POST(req);
-      const body = await res.json();
-
-      expect(res.status).toBe(200);
-      expect(body.id).toBe(`sig-${type}`);
-    }
   });
 });
 
 // ── GET ────────────────────────────────────────────────────────────────────
 
 describe('GET /api/video-signal', () => {
-  it('returns unconsumed signals for the current user in the room', async () => {
+  it('returns direct signals (recipientId=me) AND broadcast signals (recipientId=null)', async () => {
+    vi.mocked(getAuthUser).mockResolvedValue(doctor as any);
     const signals = [
-      { id: 'sig-1', type: 'offer', senderId: 'user-doctor-2', payload: '{"sdp":"..."}' },
-      { id: 'sig-2', type: 'candidate', senderId: 'user-doctor-2', payload: '{"candidate":"..."}' },
+      { id: 's1', type: 'offer',     senderId: patient.id, payload: '{"sdp":"x"}' }, // broadcast
+      { id: 's2', type: 'candidate', senderId: patient.id, payload: '{"c":"y"}' },   // direct
     ];
     mockPrisma.videoSignal.findMany.mockResolvedValue(signals);
     mockPrisma.videoSignal.updateMany.mockResolvedValue({ count: 2 });
 
-    const req = makeRequest('GET', undefined, 'http://localhost/api/video-signal?roomId=room-abc');
+    const req = makeRequest('GET', undefined, 'http://localhost/api/video-signal?roomId=room-x');
     const res = await GET(req);
     const body = await res.json();
 
     expect(res.status).toBe(200);
     expect(body.signals).toHaveLength(2);
-    expect(body.signals[0]).toEqual({ id: 'sig-1', type: 'offer', senderId: 'user-doctor-2', payload: '{"sdp":"..."}' });
+
+    // Verify the query filters: NOT sender=me, AND (recipientId=me OR null)
+    expect(mockPrisma.videoSignal.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          NOT: { senderId: doctor.id },
+          OR: [{ recipientId: doctor.id }, { recipientId: null }],
+        }),
+      })
+    );
   });
 
-  it('marks fetched signals as consumed', async () => {
-    const signals = [{ id: 'sig-1', type: 'answer', senderId: 'other', payload: '{}' }];
-    mockPrisma.videoSignal.findMany.mockResolvedValue(signals);
+  it('marks returned signals as consumed', async () => {
+    vi.mocked(getAuthUser).mockResolvedValue(doctor as any);
+    mockPrisma.videoSignal.findMany.mockResolvedValue([
+      { id: 's1', type: 'offer', senderId: patient.id, payload: '{}' },
+    ]);
     mockPrisma.videoSignal.updateMany.mockResolvedValue({ count: 1 });
 
-    const req = makeRequest('GET', undefined, 'http://localhost/api/video-signal?roomId=room-abc');
-    await GET(req);
+    await GET(makeRequest('GET', undefined, 'http://localhost/api/video-signal?roomId=room-x'));
 
     expect(mockPrisma.videoSignal.updateMany).toHaveBeenCalledWith({
-      where: { id: { in: ['sig-1'] } },
+      where: { id: { in: ['s1'] } },
       data: { consumed: true },
     });
   });
 
-  it('does not call updateMany when there are no signals', async () => {
+  it('does not call updateMany when no signals found', async () => {
     mockPrisma.videoSignal.findMany.mockResolvedValue([]);
-
-    const req = makeRequest('GET', undefined, 'http://localhost/api/video-signal?roomId=room-abc');
-    const res = await GET(req);
-    const body = await res.json();
-
-    expect(res.status).toBe(200);
-    expect(body.signals).toHaveLength(0);
+    await GET(makeRequest('GET', undefined, 'http://localhost/api/video-signal?roomId=room-x'));
     expect(mockPrisma.videoSignal.updateMany).not.toHaveBeenCalled();
   });
 
   it('returns empty array when roomId is missing', async () => {
-    const req = makeRequest('GET', undefined, 'http://localhost/api/video-signal');
-    const res = await GET(req);
+    const res = await GET(makeRequest('GET'));
     const body = await res.json();
-
-    expect(res.status).toBe(200);
     expect(body.signals).toHaveLength(0);
     expect(mockPrisma.videoSignal.findMany).not.toHaveBeenCalled();
   });
 
   it('returns 401 when not authenticated', async () => {
     vi.mocked(getAuthUser).mockResolvedValue(null);
-
-    const req = makeRequest('GET', undefined, 'http://localhost/api/video-signal?roomId=room-abc');
-    const res = await GET(req);
-
+    const res = await GET(makeRequest('GET', undefined, 'http://localhost/api/video-signal?roomId=x'));
     expect(res.status).toBe(401);
   });
 
-  it('only returns signals addressed to the current user', async () => {
+  it('never returns signals sent by the current user', async () => {
     mockPrisma.videoSignal.findMany.mockResolvedValue([]);
-
-    const req = makeRequest('GET', undefined, 'http://localhost/api/video-signal?roomId=room-abc');
-    await GET(req);
-
+    await GET(makeRequest('GET', undefined, 'http://localhost/api/video-signal?roomId=room-x'));
     expect(mockPrisma.videoSignal.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ recipientId: mockUser.id }),
+        where: expect.objectContaining({ NOT: { senderId: patient.id } }),
       })
     );
   });
 });
 
-// ── DELETE ─────────────────────────────────────────────────────────────────
+// ── DELETE ────────────────────────────────────────────────────────────────
 
 describe('DELETE /api/video-signal', () => {
   it('deletes consumed signals for the room', async () => {
-    mockPrisma.videoSignal.deleteMany.mockResolvedValue({ count: 5 });
-
-    const req = makeRequest('DELETE', undefined, 'http://localhost/api/video-signal?roomId=room-abc');
-    const res = await DELETE(req);
-    const body = await res.json();
-
+    mockPrisma.videoSignal.deleteMany.mockResolvedValue({ count: 3 });
+    const res = await DELETE(makeRequest('DELETE', undefined, 'http://localhost/api/video-signal?roomId=room-x'));
     expect(res.status).toBe(200);
-    expect(body.ok).toBe(true);
+    expect((await res.json()).ok).toBe(true);
     expect(mockPrisma.videoSignal.deleteMany).toHaveBeenCalledWith({
-      where: { roomId: 'room-abc', consumed: true },
+      where: { roomId: 'room-x', consumed: true },
     });
   });
 
-  it('returns 400 when roomId is missing', async () => {
-    const req = makeRequest('DELETE', undefined, 'http://localhost/api/video-signal');
-    const res = await DELETE(req);
-
+  it('returns 400 when roomId missing', async () => {
+    const res = await DELETE(makeRequest('DELETE'));
     expect(res.status).toBe(400);
     expect(mockPrisma.videoSignal.deleteMany).not.toHaveBeenCalled();
   });
 
   it('returns 401 when not authenticated', async () => {
     vi.mocked(getAuthUser).mockResolvedValue(null);
-
-    const req = makeRequest('DELETE', undefined, 'http://localhost/api/video-signal?roomId=room-abc');
-    const res = await DELETE(req);
-
+    const res = await DELETE(makeRequest('DELETE', undefined, 'http://localhost/api/video-signal?roomId=x'));
     expect(res.status).toBe(401);
   });
 });
 
-// ── Signaling flow integration test ───────────────────────────────────────
+// ── Full signaling flow (in-memory store) ─────────────────────────────────
 
-describe('Full signaling flow (patient → doctor)', () => {
+describe('Broadcast-offer signaling flow', () => {
   /**
-   * Simulates the complete offer/answer/candidate exchange between two users
-   * by calling the API handlers in sequence, as the real browser code does.
+   * In-memory Prisma replacement.
+   * Simulates: patient broadcasts offer → admin (or doctor) receives it
+   * → admin answers directly to patient → ICE candidates exchanged.
    */
 
-  const patient = { id: 'aaaa-patient', role: 'PATIENT', firstName: 'Jane', lastName: 'Doe' };
-  const doctor  = { id: 'bbbb-doctor',  role: 'DOCTOR',  firstName: 'Priya', lastName: 'Sharma' };
-  const roomId  = 'room-integration-test';
-
-  // In-memory signal store (replaces Prisma for this test group)
-  let signalStore: Array<{
-    id: string; roomId: string; senderId: string; recipientId: string;
+  let store: Array<{
+    id: string; roomId: string; senderId: string; recipientId: string | null;
     type: string; payload: string; consumed: boolean;
   }> = [];
-  let nextId = 1;
+  let seq = 1;
 
   beforeEach(() => {
-    signalStore = [];
-    nextId = 1;
+    store = [];
+    seq = 1;
 
     mockPrisma.videoSignal.create.mockImplementation(({ data }: any) => {
-      const record = { id: `sig-${nextId++}`, ...data, consumed: false };
-      signalStore.push(record);
-      return Promise.resolve(record);
+      const rec = { id: `s${seq++}`, ...data, recipientId: data.recipientId ?? null, consumed: false };
+      store.push(rec);
+      return Promise.resolve(rec);
     });
 
     mockPrisma.videoSignal.findMany.mockImplementation(({ where }: any) => {
-      const matches = signalStore.filter(
-        (s) =>
-          s.roomId === where.roomId &&
-          s.recipientId === where.recipientId &&
-          s.consumed === false
-      );
-      return Promise.resolve(matches);
+      const results = store.filter((s) => {
+        if (s.roomId !== where.roomId) return false;
+        if (s.consumed !== false) return false;
+        if (where.NOT?.senderId === s.senderId) return false;
+        if (where.OR) {
+          return where.OR.some((c: any) =>
+            c.recipientId === s.recipientId ||
+            (c.recipientId === null && s.recipientId === null)
+          );
+        }
+        return true;
+      });
+      return Promise.resolve(results);
     });
 
     mockPrisma.videoSignal.updateMany.mockImplementation(({ where, data }: any) => {
       let count = 0;
-      signalStore.forEach((s) => {
-        if (where.id.in.includes(s.id)) { s.consumed = data.consumed; count++; }
+      store.forEach((s) => {
+        if (where.id.in.includes(s.id)) { Object.assign(s, data); count++; }
       });
       return Promise.resolve({ count });
     });
   });
 
-  it('patient posts offer → doctor receives it via GET', async () => {
-    // Patient creates and posts an offer
+  const room = 'room-instant-123';
+  const url = `http://localhost/api/video-signal?roomId=${room}`;
+
+  it('patient broadcasts offer → admin receives it (not sent to doctor)', async () => {
+    // Patient posts broadcast offer
     vi.mocked(getAuthUser).mockResolvedValue(patient as any);
-    const postReq = makeRequest('POST', {
-      roomId,
-      recipientId: doctor.id,
-      type: 'offer',
-      payload: JSON.stringify({ type: 'offer', sdp: 'v=0\r\nm=video...' }),
-    });
-    const postRes = await POST(postReq);
-    expect(postRes.status).toBe(200);
+    await POST(makeRequest('POST', { roomId: room, recipientId: null, type: 'offer', payload: '{"sdp":"offer"}' }));
 
-    // Doctor polls and receives the offer
-    vi.mocked(getAuthUser).mockResolvedValue(doctor as any);
-    const getReq = makeRequest('GET', undefined, `http://localhost/api/video-signal?roomId=${roomId}`);
-    const getRes = await GET(getReq);
-    const { signals } = await getRes.json();
-
+    // Admin polls — should receive the broadcast offer
+    vi.mocked(getAuthUser).mockResolvedValue(admin as any);
+    const { signals } = await (await GET(makeRequest('GET', undefined, url))).json();
     expect(signals).toHaveLength(1);
     expect(signals[0].type).toBe('offer');
     expect(signals[0].senderId).toBe(patient.id);
   });
 
-  it('offer is marked consumed after first poll — not returned again', async () => {
+  it('doctor also receives the broadcast offer', async () => {
     vi.mocked(getAuthUser).mockResolvedValue(patient as any);
-    await POST(makeRequest('POST', {
-      roomId, recipientId: doctor.id, type: 'offer', payload: '{"sdp":"x"}',
-    }));
+    await POST(makeRequest('POST', { roomId: room, recipientId: null, type: 'offer', payload: '{"sdp":"offer"}' }));
 
+    // Doctor polls first
     vi.mocked(getAuthUser).mockResolvedValue(doctor as any);
-    const url = `http://localhost/api/video-signal?roomId=${roomId}`;
-
-    const first  = await GET(makeRequest('GET', undefined, url));
-    const second = await GET(makeRequest('GET', undefined, url));
-
-    const firstSignals  = (await first.json()).signals;
-    const secondSignals = (await second.json()).signals;
-
-    expect(firstSignals).toHaveLength(1);
-    expect(secondSignals).toHaveLength(0); // consumed — not returned again
+    const { signals } = await (await GET(makeRequest('GET', undefined, url))).json();
+    expect(signals[0].type).toBe('offer');
   });
 
-  it('complete round-trip: offer → answer → candidates exchanged correctly', async () => {
-    // Step 1: Patient posts offer to doctor
+  it('broadcast offer consumed after first poll — second poller gets nothing', async () => {
     vi.mocked(getAuthUser).mockResolvedValue(patient as any);
-    await POST(makeRequest('POST', {
-      roomId, recipientId: doctor.id, type: 'offer',
-      payload: JSON.stringify({ type: 'offer', sdp: 'v=0 offer' }),
-    }));
+    await POST(makeRequest('POST', { roomId: room, recipientId: null, type: 'offer', payload: '{}' }));
 
-    // Step 2: Patient posts ICE candidates to doctor
-    await POST(makeRequest('POST', {
-      roomId, recipientId: doctor.id, type: 'candidate',
-      payload: JSON.stringify({ candidate: 'candidate:1 ...', sdpMid: '0' }),
-    }));
+    // Admin polls first — consumes the offer
+    vi.mocked(getAuthUser).mockResolvedValue(admin as any);
+    const first = await (await GET(makeRequest('GET', undefined, url))).json();
+    expect(first.signals).toHaveLength(1);
 
-    // Step 3: Doctor polls — should receive offer + candidate
+    // Doctor polls second — offer already consumed
     vi.mocked(getAuthUser).mockResolvedValue(doctor as any);
-    const doctorPoll1 = await GET(makeRequest('GET', undefined, `http://localhost/api/video-signal?roomId=${roomId}`));
-    const doctorSignals = (await doctorPoll1.json()).signals;
-    expect(doctorSignals.map((s: any) => s.type)).toEqual(['offer', 'candidate']);
+    const second = await (await GET(makeRequest('GET', undefined, url))).json();
+    expect(second.signals).toHaveLength(0);
+  });
 
-    // Step 4: Doctor posts answer to patient
+  it('admin sends answer directly to patient, patient receives it', async () => {
+    // Admin posts answer directly to patient
+    vi.mocked(getAuthUser).mockResolvedValue(admin as any);
     await POST(makeRequest('POST', {
-      roomId, recipientId: patient.id, type: 'answer',
-      payload: JSON.stringify({ type: 'answer', sdp: 'v=0 answer' }),
+      roomId: room, recipientId: patient.id, type: 'answer', payload: '{"sdp":"answer"}',
     }));
 
-    // Step 5: Doctor posts ICE candidates to patient
-    await POST(makeRequest('POST', {
-      roomId, recipientId: patient.id, type: 'candidate',
-      payload: JSON.stringify({ candidate: 'candidate:2 ...', sdpMid: '0' }),
-    }));
-
-    // Step 6: Patient polls — should receive answer + candidate
+    // Patient polls — receives the answer
     vi.mocked(getAuthUser).mockResolvedValue(patient as any);
-    const patientPoll = await GET(makeRequest('GET', undefined, `http://localhost/api/video-signal?roomId=${roomId}`));
-    const patientSignals = (await patientPoll.json()).signals;
-    expect(patientSignals.map((s: any) => s.type)).toEqual(['answer', 'candidate']);
+    const { signals } = await (await GET(makeRequest('GET', undefined, url))).json();
+    expect(signals).toHaveLength(1);
+    expect(signals[0].type).toBe('answer');
+    expect(signals[0].senderId).toBe(admin.id);
+  });
 
-    // Step 7: Signals are not cross-delivered (patient's signals go to doctor only)
-    vi.mocked(getAuthUser).mockResolvedValue(doctor as any);
-    const doctorPoll2 = await GET(makeRequest('GET', undefined, `http://localhost/api/video-signal?roomId=${roomId}`));
-    expect((await doctorPoll2.json()).signals).toHaveLength(0);
+  it('complete instant-meet flow: patient offer → admin answers → ICE exchanged', async () => {
+    // 1. Patient broadcasts offer
+    vi.mocked(getAuthUser).mockResolvedValue(patient as any);
+    await POST(makeRequest('POST', { roomId: room, recipientId: null, type: 'offer', payload: '{"sdp":"offer"}' }));
+
+    // 2. Patient broadcasts ICE candidates (peer unknown yet)
+    await POST(makeRequest('POST', { roomId: room, recipientId: null, type: 'candidate', payload: '{"c":"p-ice-1"}' }));
+    await POST(makeRequest('POST', { roomId: room, recipientId: null, type: 'candidate', payload: '{"c":"p-ice-2"}' }));
+
+    // 3. Admin polls — receives offer + 2 ICE candidates
+    vi.mocked(getAuthUser).mockResolvedValue(admin as any);
+    const adminPoll1 = await (await GET(makeRequest('GET', undefined, url))).json();
+    expect(adminPoll1.signals.map((s: any) => s.type)).toEqual(['offer', 'candidate', 'candidate']);
+
+    // 4. Admin posts answer + ICE directly to patient
+    await POST(makeRequest('POST', { roomId: room, recipientId: patient.id, type: 'answer', payload: '{"sdp":"answer"}' }));
+    await POST(makeRequest('POST', { roomId: room, recipientId: patient.id, type: 'candidate', payload: '{"c":"a-ice-1"}' }));
+
+    // 5. Patient polls — receives answer + admin ICE
+    vi.mocked(getAuthUser).mockResolvedValue(patient as any);
+    const patientPoll = await (await GET(makeRequest('GET', undefined, url))).json();
+    expect(patientPoll.signals.map((s: any) => s.type)).toEqual(['answer', 'candidate']);
+
+    // 6. Confirm no cross-delivery: admin polling again gets nothing
+    vi.mocked(getAuthUser).mockResolvedValue(admin as any);
+    const adminPoll2 = await (await GET(makeRequest('GET', undefined, url))).json();
+    expect(adminPoll2.signals).toHaveLength(0);
+  });
+
+  it('patient signal not returned to patient (no self-delivery)', async () => {
+    vi.mocked(getAuthUser).mockResolvedValue(patient as any);
+    await POST(makeRequest('POST', { roomId: room, recipientId: null, type: 'offer', payload: '{}' }));
+
+    // Patient polls own room — should NOT get back their own offer
+    const { signals } = await (await GET(makeRequest('GET', undefined, url))).json();
+    expect(signals).toHaveLength(0);
   });
 });
