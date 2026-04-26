@@ -273,6 +273,13 @@ export default function VideoCallPage() {
               } else {
                 recvCandidateBuffer.current.push(candidate);
               }
+
+            // ── Other party ended the call ────────────────────────────────
+            } else if (signal.type === 'hangup') {
+              cleanupCall();
+              toast.info('The other party has ended the call');
+              router.push(dashboardPath);
+              return; // stop processing remaining signals
             }
           }
         } catch (err) {
@@ -311,7 +318,7 @@ export default function VideoCallPage() {
     }
   };
 
-  const endCall = async () => {
+  const cleanupCall = () => {
     if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
     pcRef.current?.close();
     pcRef.current = null;
@@ -323,8 +330,22 @@ export default function VideoCallPage() {
     peerUserIdRef.current = null;
     recvCandidateBuffer.current = [];
     sendCandidateBuffer.current = [];
+  };
 
+  const endCall = async () => {
     const roomId = appointment?.roomId || appointmentId;
+
+    // Notify the other party BEFORE cleanup so the signal still goes out
+    if (peerUserIdRef.current) {
+      fetch('/api/video-signal', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenRef.current}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId, recipientId: peerUserIdRef.current, type: 'hangup', payload: '{}' }),
+      }).catch(() => {});
+    }
+
+    cleanupCall();
+
     fetch(`/api/video-signal?roomId=${encodeURIComponent(roomId)}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${tokenRef.current}` },
@@ -354,7 +375,8 @@ export default function VideoCallPage() {
   }
 
   return (
-    <div className="h-screen bg-gray-900 flex flex-col overflow-hidden">
+    // 100dvh accounts for mobile browser chrome (address bar) so no white gap
+    <div className="bg-gray-900 flex flex-col overflow-hidden" style={{ height: '100dvh' }}>
       {/* Header */}
       <div className="bg-gray-800 border-b border-gray-700 shrink-0">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
@@ -387,8 +409,8 @@ export default function VideoCallPage() {
         </div>
       </div>
 
-      {/* Main area — flex-1 fills exactly the space left after the header */}
-      <div className="flex-1 relative overflow-hidden bg-gray-900">
+      {/* Main area: min-h-0 prevents flex overflow on short viewports */}
+      <div className="flex-1 min-h-0 relative overflow-hidden bg-gray-900">
         {inCall ? (
           <>
             {/* Remote video — h-full fills the entire flex-1 container */}
@@ -406,9 +428,9 @@ export default function VideoCallPage() {
               )}
             </div>
 
-            {/* Local PiP */}
+            {/* Local PiP — mirrored so it looks natural (like a mirror) */}
             <div className="absolute bottom-20 right-3 w-28 h-40 sm:w-36 sm:h-48 rounded-xl overflow-hidden shadow-xl border-2 border-gray-600 bg-gray-800">
-              <video ref={localVideoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
+              <video ref={localVideoRef} autoPlay muted playsInline className="w-full h-full object-cover" style={{ transform: 'scaleX(-1)' }} />
               {videoOff && (
                 <div className="absolute inset-0 bg-gray-800 flex items-center justify-center">
                   <VideoOff className="w-6 h-6 text-gray-400" />
@@ -446,7 +468,8 @@ export default function VideoCallPage() {
             </div>
           </>
         ) : (
-          <div className="max-w-2xl mx-auto px-4 py-12">
+          <div className="h-full overflow-y-auto">
+          <div className="max-w-2xl mx-auto px-4 py-8">
             <div className="text-center mb-8">
               <div className="bg-gray-800 w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6">
                 <Video className="w-12 h-12 text-pink-500" />
@@ -526,9 +549,10 @@ export default function VideoCallPage() {
               )}
             </button>
 
-            <p className="text-center text-gray-500 text-sm mt-3">
+            <p className="text-center text-gray-500 text-sm mt-3 pb-4">
               End-to-end encrypted · peer-to-peer · no third-party servers
             </p>
+          </div>
           </div>
         )}
       </div>
